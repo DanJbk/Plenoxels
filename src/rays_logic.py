@@ -79,7 +79,7 @@ def visulize_rays(ray_directions, camera_positions):
     plt.show()
 
 
-def visualize_rays_3d(ray_directions, camera_positions):
+def visualize_rays_3d(ray_directions, camera_positions, scatter_data=None):
     fig = plt.figure(figsize=(10, 10))
     ax = fig.add_subplot(111, projection='3d')
 
@@ -92,6 +92,13 @@ def visualize_rays_3d(ray_directions, camera_positions):
         ax.quiver(origin_x[i], origin_y[i], origin_z[i],
                   ray_directions[i, 0], ray_directions[i, 1], ray_directions[i, 2],
                   color='b', alpha=0.5)
+
+    # Add 3D scatter plot
+    if not scatter_data is None:
+        scatter_x = scatter_data[:, 0]
+        scatter_y = scatter_data[:, 1]
+        scatter_z = scatter_data[:, 2]
+        ax.scatter(scatter_x, scatter_y, scatter_z, c='r', marker='o')
 
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
@@ -112,7 +119,9 @@ def main():
     path = f"{data_folder}\{object_folders[0]}/transforms_train.json"
     data = read_data(path)
 
-    number_of_rays = 4
+    number_of_rays = 16
+    delta_step = 3.5
+
     ray_directions = torch.zeros([])
     camera_positions = torch.zeros([])
     for i in range(len(data["frames"])):
@@ -131,7 +140,9 @@ def main():
     print("p", camera_positions.shape)
     print("r", ray_directions.shape)
 
-    visualize_rays_3d(ray_directions, camera_positions)
+    samples = camera_positions + ray_directions * delta_step
+
+    visualize_rays_3d(ray_directions, camera_positions, samples)
 
 
 if __name__ == "__main__":

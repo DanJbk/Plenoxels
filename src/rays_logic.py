@@ -119,26 +119,30 @@ def main():
     path = f"{data_folder}\{object_folders[0]}/transforms_train.json"
     data = read_data(path)
 
-    number_of_rays = 16
-    delta_step = 0.5
-    num_samples = 3
-    even_spread=False
+    number_of_rays = 9
+    delta_step = .4
+    num_samples = 10
+    even_spread = True
+    camera_ray = False
 
     ray_directions = torch.zeros([])
     camera_positions = torch.zeros([])
     for i in range(len(data["frames"])):
         transform_matrix, rotation, file_path, camera_angle_x = get_data_from_index(data, i)
 
-        # current_ray_directions = transform_matrix[:3, 2].unsqueeze(0)* -1
-        # camera_positions = transform_matrix[:3, 3].unsqueeze(0) if len(camera_positions.shape) == 0 else torch.cat(
-        #     [camera_positions, transform_matrix[:3, 3].unsqueeze(0)], 0)
-
-        current_ray_directions = generate_rays(number_of_rays, transform_matrix, camera_angle_x, even_spread=even_spread)
+        if camera_ray:
+            current_ray_directions = transform_matrix[:3, 2].unsqueeze(0)* -1
+            camera_positions = transform_matrix[:3, 3].unsqueeze(0) if len(camera_positions.shape) == 0 else torch.cat(
+                [camera_positions, transform_matrix[:3, 3].unsqueeze(0)], 0)
+        else:
+            current_ray_directions = generate_rays(number_of_rays, transform_matrix, camera_angle_x, even_spread=even_spread)
+            camera_positions = transform_matrix[:3, 3].unsqueeze(0).repeat(number_of_rays, 1) if len(
+                camera_positions.shape) == 0 else torch.cat(
+                [camera_positions, transform_matrix[:3, 3].unsqueeze(0).repeat(number_of_rays, 1)], 0)
         ray_directions = current_ray_directions if len(ray_directions.shape) == 0 else torch.cat(
             [ray_directions, current_ray_directions], 0)
-        camera_positions = transform_matrix[:3, 3].unsqueeze(0).repeat(number_of_rays, 1) if len(
-            camera_positions.shape) == 0 else torch.cat(
-            [camera_positions, transform_matrix[:3, 3].unsqueeze(0).repeat(number_of_rays, 1)], 0)
+
+
 
     delta_forsamples = (
                 torch.repeat_interleave(

@@ -1,7 +1,7 @@
 import json
 import torch
 import numpy as np
-import matplotlib as plt
+import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
 
@@ -99,10 +99,40 @@ def visualize_rays_3d(ray_directions, camera_positions):
     ax.set_title("3D Visualization of Evenly Spread Ray Directions within Camera's FOV")
     plt.show()
 
+
 def read_data(data_path):
-    # data_folder = "Plenoxels\data"
-    # object_folders = ['chair', 'drums', 'ficus', 'hotdog', 'lego', 'materials', 'mic', 'ship']
-    # path = f"{data_folder}/{object_folders[0]}/transforms_train.json"
     with open(data_path, "r") as f:
         data = json.load(f)
     return data
+
+
+def main():
+    data_folder = "D:\9.programming\Plenoxels\data"
+    object_folders = ['chair', 'drums', 'ficus', 'hotdog', 'lego', 'materials', 'mic', 'ship']
+    path = f"{data_folder}\{object_folders[0]}/transforms_train.json"
+    data = read_data(path)
+
+    number_of_rays = 4
+    ray_directions = torch.zeros([])
+    camera_positions = torch.zeros([])
+    for i in range(len(data["frames"])):
+        transform_matrix, rotation, file_path, camera_angle_x = get_data_from_index(data, i)
+
+        # current_ray_directions = transform_matrix[:3, 2].unsqueeze(0)* -1
+        # camera_positions = transform_matrix[:3, 3].unsqueeze(0) if len(camera_positions.shape) == 0 else torch.cat([camera_positions, transform_matrix[:3, 3].unsqueeze(0)], 0)
+
+        current_ray_directions = generate_rays(number_of_rays, transform_matrix, camera_angle_x, even_spread=True)
+        ray_directions = current_ray_directions if len(ray_directions.shape) == 0 else torch.cat(
+            [ray_directions, current_ray_directions], 0)
+        camera_positions = transform_matrix[:3, 3].unsqueeze(0).repeat(number_of_rays, 1) if len(
+            camera_positions.shape) == 0 else torch.cat(
+            [camera_positions, transform_matrix[:3, 3].unsqueeze(0).repeat(number_of_rays, 1)], 0)
+
+    print("p", camera_positions.shape)
+    print("r", ray_directions.shape)
+
+    visualize_rays_3d(ray_directions, camera_positions)
+
+
+if __name__ == "__main__":
+    main()

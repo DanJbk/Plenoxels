@@ -1,9 +1,12 @@
 import json
 import torch
 import numpy as np
+import logging
 import matplotlib.pyplot as plt
+from logging import info as printi
 from mpl_toolkits.mplot3d import Axes3D
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 
 def get_data_from_index(data, index):
     camera_angle_x = data["camera_angle_x"]
@@ -114,16 +117,39 @@ def read_data(data_path):
 
 
 def main():
+    """
+    This function reads a dataset of 3D object transformations, generates camera rays, and visualizes
+    the rays in 3D space. The dataset contains information about frames, and the function processes
+    each frame to extract relevant data. Rays are generated based on user-defined parameters, and
+    the visualization is created using the generated rays and camera positions.
+
+    Parameters:
+    - data_folder (str): The folder containing the data files.
+    - object_folders (List[str]): A list of folder names containing object-specific data.
+    - number_of_rays (int): The desired number of rays to generate.
+    - delta_step (float): The step size between samples along each ray.
+    - num_samples (int): The number of samples to take along each ray.
+    - even_spread (bool): If True, generates rays with an even angular spread; otherwise, uses a
+                          random distribution.
+    - camera_ray (bool): If True, only a single ray is generated for each frame, directly opposite
+                         to the camera direction.
+
+    Returns:
+    None
+    """
     data_folder = "D:\9.programming\Plenoxels\data"
     object_folders = ['chair', 'drums', 'ficus', 'hotdog', 'lego', 'materials', 'mic', 'ship']
     path = f"{data_folder}\{object_folders[0]}/transforms_train.json"
     data = read_data(path)
 
-    number_of_rays = 9
+    number_of_rays = 16
     delta_step = .4
     num_samples = 10
     even_spread = True
     camera_ray = False
+
+    if even_spread:
+        number_of_rays = int(np.round(np.sqrt(number_of_rays))**2)
 
     ray_directions = torch.zeros([])
     camera_positions = torch.zeros([])
@@ -139,10 +165,9 @@ def main():
             camera_positions = transform_matrix[:3, 3].unsqueeze(0).repeat(number_of_rays, 1) if len(
                 camera_positions.shape) == 0 else torch.cat(
                 [camera_positions, transform_matrix[:3, 3].unsqueeze(0).repeat(number_of_rays, 1)], 0)
+
         ray_directions = current_ray_directions if len(ray_directions.shape) == 0 else torch.cat(
             [ray_directions, current_ray_directions], 0)
-
-
 
     delta_forsamples = (
                 torch.repeat_interleave(
@@ -153,8 +178,9 @@ def main():
     samples_interval = camera_positions_forsamples + ray_directions_forsamples * delta_forsamples
 
     visualize_rays_3d(ray_directions, camera_positions, samples_interval)
-    # visualize_rays_3d(ray_directions, camera_positions, samples)
 
 
 if __name__ == "__main__":
+    printi("Start")
     main()
+    printi("end")

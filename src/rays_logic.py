@@ -5,8 +5,32 @@ import logging
 import matplotlib.pyplot as plt
 from logging import info as printi
 from mpl_toolkits.mplot3d import Axes3D
+from torch import Tensor
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
+
+
+def get_grid(sx, sy, sz, points_distance=0.5, info_size=3):
+    grindx_indices, grindy_indices, grindz_indices = torch.arange(sx), torch.arange(sy), torch.arange(sz)
+
+    coordsz, coordsx, coordsy = torch.meshgrid(grindz_indices, grindx_indices, grindy_indices, indexing='ij')
+
+    # center grid
+    coordsx, coordsy, coordsz = coordsx - np.ceil(sx / 2) + 1, coordsy - np.ceil(sy / 2) + 1, coordsz - np.ceil(
+        sz / 2) + 1
+
+    # edit grid spacing
+    coordsx, coordsy, coordsz = coordsx * points_distance, coordsy * points_distance, coordsz * points_distance
+
+    # make it so no points of the grid are underground
+    coordsz = coordsz - coordsz.min()
+
+    grid_grid = torch.stack([coordsx, coordsy, coordsz]).T
+    grid_coords = grid_grid.reshape(sx * sy * sz, 3)
+
+    grid_cells = torch.zeros([grid_coords.shape[0], info_size])
+
+    return grid_coords, grid_cells
 
 def get_data_from_index(data, index):
     camera_angle_x = data["camera_angle_x"]
@@ -142,9 +166,9 @@ def main():
     path = f"{data_folder}\{object_folders[0]}/transforms_train.json"
     data = read_data(path)
 
-    number_of_rays = 16
-    delta_step = .4
-    num_samples = 10
+    number_of_rays = 4
+    delta_step = .8
+    num_samples = 5
     even_spread = True
     camera_ray = False
 
@@ -181,6 +205,6 @@ def main():
 
 
 if __name__ == "__main__":
-    printi("Start")
+    printi("start")
     main()
     printi("end")

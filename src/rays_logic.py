@@ -9,11 +9,58 @@ from torch import Tensor
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 
+def get_points(grid_indices, samples_interval, points_distance):
+    # (grid_indices - grid_indices.min(0)[0])/points_distance
+
+    normalized_samples_for_indecies = ((samples_interval - grid_indices.min(0)[0]) / points_distance)
+
+    ceil_x = torch.ceil(normalized_samples_for_indecies[:, 0]).unsqueeze(1)
+    ceil_y = torch.ceil(normalized_samples_for_indecies[:, 1]).unsqueeze(1)
+    ceil_z = torch.ceil(normalized_samples_for_indecies[:, 2]).unsqueeze(1)
+    floor_x = torch.floor(normalized_samples_for_indecies[:, 0]).unsqueeze(1)
+    floor_y = torch.floor(normalized_samples_for_indecies[:, 1]).unsqueeze(1)
+    floor_z = torch.floor(normalized_samples_for_indecies[:, 2]).unsqueeze(1)
+
+    # generate the indecies of all the corners.
+    relevant_points = [
+        torch.cat([x_component, y_component, z_component], 1).unsqueeze(1)
+        for x_component in [ceil_x, floor_x]
+        for y_component in [ceil_y, floor_y]
+        for z_component in [ceil_z, floor_z]
+    ]
+    relevant_points = torch.cat(relevant_points, 1).type(torch.long)
+
+    return relevant_points
+
+
+def collect_cell_information_via_indices(A, B):
+    # A = torch.tensor([[0, 1, 8]]*K)  # Shape: [K, 3]
+    # B = torch.randn(X, Y, Z, N)  # Shape: [X, Y, Z, N]
+
+    X, Y, Z, N = B.shape
+
+    # Define the desired column order
+    column_order = torch.tensor([1, 0, 2])
+
+    # Reorder the columns of A
+    # A = torch.index_select(A, 1, column_order)
+
+    # Reshape B to [X*Y*Z, N]
+    B_flat = B.reshape(-1, N)  # Shape: [X*Y*Z, N]
+
+    # Calculate flat indices from A
+    indices = A[:, 0] * Y * Z + A[:, 1] * Z + A[:, 2]
+
+    # Gather the elements from B_flat using the indices
+    return torch.gather(B_flat, 0, indices.view(-1, 1).expand(-1, N))
+
 
 def get_grid(sx, sy, sz, points_distance=0.5, info_size=3):
     grindx_indices, grindy_indices, grindz_indices = torch.arange(sx), torch.arange(sy), torch.arange(sz)
 
     coordsz, coordsx, coordsy = torch.meshgrid(grindz_indices, grindx_indices, grindy_indices, indexing='ij')
+
+    meshgrid = torch.stack([coordsx, coordsy, coordsz]).T
 
     # center grid
     coordsx, coordsy, coordsz = coordsx - np.ceil(sx / 2) + 1, coordsy - np.ceil(sy / 2) + 1, coordsz - np.ceil(
@@ -28,9 +75,9 @@ def get_grid(sx, sy, sz, points_distance=0.5, info_size=3):
     grid_grid = torch.stack([coordsx, coordsy, coordsz]).T
     grid_coords = grid_grid.reshape(sx * sy * sz, 3)
 
-    grid_cells = torch.zeros([grid_coords.shape[0], info_size])
+    grid_cells = torch.zeros_like(grid_grid)
 
-    return grid_coords, grid_cells
+    return grid_coords, grid_cells, meshgrid, grid_grid
 
 def get_data_from_index(data, index):
     camera_angle_x = data["camera_angle_x"]
@@ -110,15 +157,16 @@ def visualize_rays_3d(ray_directions, camera_positions, red=None, green=None, or
     fig = plt.figure(figsize=(10, 10))
     ax = fig.add_subplot(111, projection='3d')
 
-    origin_x = camera_positions[:, 0]
-    origin_y = camera_positions[:, 1]
-    origin_z = camera_positions[:, 2]
+    if len(camera_positions) > 0:
+        origin_x = camera_positions[:, 0]
+        origin_y = camera_positions[:, 1]
+        origin_z = camera_positions[:, 2]
 
-    # Plot 3D vectors
-    for i in range(ray_directions.shape[0]):
-        ax.quiver(origin_x[i], origin_y[i], origin_z[i],
-                  ray_directions[i, 0], ray_directions[i, 1], ray_directions[i, 2],
-                  color='b', alpha=0.5)
+        # Plot 3D vectors
+        for i in range(ray_directions.shape[0]):
+            ax.quiver(origin_x[i], origin_y[i], origin_z[i],
+                      ray_directions[i, 0], ray_directions[i, 1], ray_directions[i, 2],
+                      color='b', alpha=0.5)
 
     for item, color in zip([red, green, orange], ['r', 'g', 'orange']):
         if not item is None:
@@ -126,6 +174,11 @@ def visualize_rays_3d(ray_directions, camera_positions, red=None, green=None, or
             scatter_y = item[:, 1]
             scatter_z = item[:, 2]
             ax.scatter(scatter_x, scatter_y, scatter_z, c=color, marker='o')
+
+    # todo base limits on grid and/or samples
+    ax.set_xlim3d(-5, 5)
+    ax.set_ylim3d(-5, 5)
+    ax.set_zlim3d(0, 5 * 2)
 
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
@@ -194,10 +247,11 @@ def main():
     None
     """
     number_of_rays = 9
-    num_samples = 5
-    delta_step = 0.2
+    num_samples = 13
+    delta_step = 0.3
     even_spread = True
     camera_ray = False
+    points_distance = 0.9
 
     data_folder = "D:\9.programming\Plenoxels\data"
     object_folders = ['chair', 'drums', 'ficus', 'hotdog', 'lego', 'materials', 'mic', 'ship']
@@ -213,11 +267,26 @@ def main():
                                                                             camera_ray=camera_ray
                                                                             )
 
-    grid_indices, grid_cells = get_grid(9, 9, 9, points_distance=1.2, info_size=4)
+    grid_indices, grid_cells, meshgrid, grid_grid = get_grid(19, 19, 19, points_distance=points_distance, info_size=4)
 
     # visualize_rays_3d(ray_directions, camera_positions, grid_indices,samples_interval)
-    visualize_rays_3d(ray_directions, torch.repeat_interleave(camera_positions, number_of_rays, 0),
-                      samples_interval[num_samples*number_of_rays*10:num_samples*(number_of_rays*10 + 2)])
+    # visualize_rays_3d(ray_directions, torch.repeat_interleave(camera_positions, number_of_rays, 0),
+    #                   samples_interval[num_samples*number_of_rays*10:num_samples*(number_of_rays*10 + 2)])
+
+    edge_matching_points = get_points(grid_indices, samples_interval, points_distance)
+    edge_matching_points = edge_matching_points.reshape([edge_matching_points.shape[0] * edge_matching_points.shape[1],
+                                                         edge_matching_points.shape[2]])
+    selected_points = collect_cell_information_via_indices(edge_matching_points, meshgrid)
+    selected_points = selected_points.view([int(selected_points.shape[0] / 8), 8, 3])
+
+    # todo put in function and fix cases where point is out of grid (y,x,z)
+    index = 700
+    temp = torch.cat(
+        [grid_grid[tuple(s.tolist())].unsqueeze(0) for i in [index * num_samples + i for i in range(num_samples)] for s
+         in selected_points[i]])
+    temp2 = torch.cat([samples_interval[i].unsqueeze(0) for i in
+                       [index * num_samples + i for i in range(num_samples)]], 0)
+    visualize_rays_3d(ray_directions, [], temp, temp2)
 
 
 if __name__ == "__main__":

@@ -106,7 +106,7 @@ def visulize_rays(ray_directions, camera_positions):
     plt.show()
 
 
-def visualize_rays_3d(ray_directions, camera_positions, scatter_data=None):
+def visualize_rays_3d(ray_directions, camera_positions, red=None, green=None, orange=None):
     fig = plt.figure(figsize=(10, 10))
     ax = fig.add_subplot(111, projection='3d')
 
@@ -120,12 +120,12 @@ def visualize_rays_3d(ray_directions, camera_positions, scatter_data=None):
                   ray_directions[i, 0], ray_directions[i, 1], ray_directions[i, 2],
                   color='b', alpha=0.5)
 
-    # Add 3D scatter plot
-    if not scatter_data is None:
-        scatter_x = scatter_data[:, 0]
-        scatter_y = scatter_data[:, 1]
-        scatter_z = scatter_data[:, 2]
-        ax.scatter(scatter_x, scatter_y, scatter_z, c='r', marker='o')
+    for item, color in zip([red, green, orange], ['r', 'g', 'orange']):
+        if not item is None:
+            scatter_x = item[:, 0]
+            scatter_y = item[:, 1]
+            scatter_z = item[:, 2]
+            ax.scatter(scatter_x, scatter_y, scatter_z, c=color, marker='o')
 
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
@@ -167,7 +167,7 @@ def main():
     data = read_data(path)
 
     number_of_rays = 4
-    delta_step = .8
+    delta_step = 0.2
     num_samples = 5
     even_spread = True
     camera_ray = False
@@ -181,27 +181,29 @@ def main():
         transform_matrix, rotation, file_path, camera_angle_x = get_data_from_index(data, i)
 
         if camera_ray:
-            current_ray_directions = transform_matrix[:3, 2].unsqueeze(0)* -1
-            camera_positions = transform_matrix[:3, 3].unsqueeze(0) if len(camera_positions.shape) == 0 else torch.cat(
-                [camera_positions, transform_matrix[:3, 3].unsqueeze(0)], 0)
+            current_ray_directions = transform_matrix[:3, 2].unsqueeze(0) * -1
+
         else:
-            current_ray_directions = generate_rays(number_of_rays, transform_matrix, camera_angle_x, even_spread=even_spread)
-            camera_positions = transform_matrix[:3, 3].unsqueeze(0).repeat(number_of_rays, 1) if len(
-                camera_positions.shape) == 0 else torch.cat(
-                [camera_positions, transform_matrix[:3, 3].unsqueeze(0).repeat(number_of_rays, 1)], 0)
+            current_ray_directions = generate_rays(number_of_rays, transform_matrix, camera_angle_x, even_spread=True)
 
         ray_directions = current_ray_directions if len(ray_directions.shape) == 0 else torch.cat(
             [ray_directions, current_ray_directions], 0)
+        camera_positions = transform_matrix[:3, 3].unsqueeze(0) if len(camera_positions.shape) == 0 else torch.cat(
+            [camera_positions, transform_matrix[:3, 3].unsqueeze(0)], 0)
 
-    delta_forsamples = (
-                torch.repeat_interleave(
-                    torch.arange(num_samples + 1)[1:], camera_positions.shape[0]) * delta_step).unsqueeze(1)
+    delta_forsamples = delta_step*torch.arange(num_samples + 1)[1:].repeat(number_of_rays * len(data["frames"]))\
+        .unsqueeze(1)
 
-    camera_positions_forsamples = torch.cat([camera_positions] * num_samples)
-    ray_directions_forsamples = torch.cat([ray_directions] * num_samples)
+    camera_positions_forsamples = torch.repeat_interleave(camera_positions, num_samples*number_of_rays, 0)
+
+    ray_directions_forsamples = torch.repeat_interleave(ray_directions, num_samples, 0)
     samples_interval = camera_positions_forsamples + ray_directions_forsamples * delta_forsamples
 
-    visualize_rays_3d(ray_directions, camera_positions, samples_interval)
+    grid_indices, grid_cells = get_grid(9, 9, 9, points_distance=1.2, info_size=4)
+
+    # visualize_rays_3d(ray_directions, camera_positions, grid_indices,samples_interval)
+    visualize_rays_3d(ray_directions, torch.repeat_interleave(camera_positions, number_of_rays, 0),
+                      samples_interval[num_samples*number_of_rays*11:11*num_samples*number_of_rays + num_samples])
 
 
 if __name__ == "__main__":

@@ -1,4 +1,6 @@
 import json
+import time
+
 import torch
 import numpy as np
 import logging
@@ -8,6 +10,123 @@ from mpl_toolkits.mplot3d import Axes3D
 from torch import Tensor
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
+
+
+def preprocess_data(data):
+    transform_matricies = []
+    file_paths = []
+    for i in range(len(data["frames"])):
+        transform_matrix, rotation, file_path, camera_angle_x = get_data_from_index(data, i)
+        transform_matricies.append(transform_matrix.unsqueeze(0))
+        file_paths.append(file_path)
+
+    transform_matricies = torch.cat(transform_matricies, 0)
+
+    return transform_matricies, file_paths, camera_angle_x
+
+
+def sample_camera_rays_batched(data, number_of_rays, num_samples, delta_step, even_spread, camera_ray):
+    if even_spread:
+        number_of_rays = int(np.round(np.sqrt(number_of_rays)) ** 2)
+
+    transform_matricies, file_paths, camera_angle_x = preprocess_data(data)
+
+    if camera_ray:
+        current_ray_directions = transform_matricies[:, :3, 2].unsqueeze(0) * -1
+
+    else:
+        current_ray_directions = generate_rays_batched(number_of_rays, transform_matricies, camera_angle_x,
+                                                       even_spread=even_spread)
+
+    ray_directions = current_ray_directions
+    camera_positions = transform_matricies[:, :3, 3]
+
+    delta_forsamples = delta_step * torch.arange(num_samples + 1)[1:].repeat(number_of_rays * len(data["frames"])) \
+        .unsqueeze(1)
+
+    camera_positions_forsamples = torch.repeat_interleave(camera_positions, num_samples * number_of_rays, 0)
+
+    ray_directions_forsamples = torch.repeat_interleave(ray_directions, num_samples, 0)
+    samples_interval = camera_positions_forsamples + ray_directions_forsamples * delta_forsamples
+
+    return samples_interval, camera_positions, ray_directions
+
+def batched_cartesian_prod(A, B):
+    A_expanded = A.unsqueeze(-1).expand(-1, -1, B.size(1))
+    B_expanded = B.unsqueeze(-2).expand(-1, A.size(1), -1)
+    return torch.stack((A_expanded, B_expanded), dim=-1).view(A.size(0), -1, 2)
+
+def tensor_linspace(start, end, steps=10):
+    """
+    # https://github.com/zhaobozb/layout2im/blob/master/models/bilinear.py#L246
+
+    Vectorized version of torch.linspace.
+    Inputs:
+    - start: Tensor of any shape
+    - end: Tensor of the same shape as start
+    - steps: Integer
+    Returns:
+    - out: Tensor of shape start.size() + (steps,), such that
+      out.select(-1, 0) == start, out.select(-1, -1) == end,
+      and the other elements of out linearly interpolate between
+      start and end.
+    """
+    assert start.size() == end.size()
+    view_size = start.size() + (1,)
+    w_size = (1,) * start.dim() + (steps,)
+    out_size = start.size() + (steps,)
+
+    start_w = torch.linspace(1, 0, steps=steps).to(start)
+    start_w = start_w.view(w_size).expand(out_size)
+    end_w = torch.linspace(0, 1, steps=steps).to(start)
+    end_w = end_w.view(w_size).expand(out_size)
+
+    start = start.contiguous().view(view_size).expand(out_size)
+    end = end.contiguous().view(view_size).expand(out_size)
+
+    out = start_w * start + end_w * end
+    return out
+
+def generate_rays_batched(number_of_rays, transform_matricies, camera_angle_x, even_spread=False):
+    # transform_matricies, file_paths, camera_angle_x = preprocess_data(data)
+    camera_x_axis = transform_matricies[:, :3, 0]
+    camera_y_axis = transform_matricies[:, :3, 1]
+    camera_z_axis = -transform_matricies[:, :3, 2]
+    aspect_ratio = camera_x_axis.norm(dim=1) / camera_y_axis.norm(dim=1)
+    even_spread = True
+    if even_spread:
+        num_rays_sqrt = np.round(np.sqrt(number_of_rays))
+
+        start = torch.tensor([-0.5 * camera_angle_x]).repeat(aspect_ratio.shape)
+        u_values = torch.linspace(-0.5 * camera_angle_x, 0.5 * camera_angle_x, int(num_rays_sqrt)).unsqueeze(0).repeat(
+            [aspect_ratio.shape[0], 1])
+        v_values = tensor_linspace(start / aspect_ratio, -start / aspect_ratio, int(num_rays_sqrt))
+        ray_indices = batched_cartesian_prod(u_values, v_values)
+
+    else:
+        # Generate random ray indices
+        ray_indices = torch.rand(transform_matricies.shape[0], number_of_rays,
+                                 2)  # Generate random numbers in the range [0, 1)
+
+        # Scale and shift the ray indices to match the camera's FOV
+        ray_indices[:, :, 0] = camera_angle_x * (ray_indices[:, :, 0] - 0.5)
+        ray_indices[:, :, 1] = ((camera_angle_x * (1 / aspect_ratio)).unsqueeze(1) * (ray_indices[:, :, 1] - 0.5))
+
+    # Get the u and v values from ray_indices
+    u_values, v_values = ray_indices[:, :, 0].unsqueeze(-1), ray_indices[:, :, 1].unsqueeze(-1)
+    u_values = u_values.expand(100, 9, 3)
+    v_values = v_values.expand(100, 9, 3)
+
+    camera_x_axis = camera_x_axis.unsqueeze(1).expand(100, 9, 3)
+    camera_y_axis = camera_y_axis.unsqueeze(1).expand(100, 9, 3)
+    camera_z_axis = camera_z_axis.unsqueeze(1).expand(100, 9, 3)
+
+    directions = u_values * camera_x_axis + v_values * camera_y_axis + camera_z_axis
+
+    ray_directions = directions / directions.norm(dim=2).unsqueeze(-1)
+
+    return ray_directions.reshape(ray_directions.shape[0] * number_of_rays, -1)
+
 
 def get_points(grid_indices, samples_interval, points_distance):
     # (grid_indices - grid_indices.min(0)[0])/points_distance
@@ -198,21 +317,23 @@ def sample_camera_rays(data, number_of_rays, num_samples, delta_step, even_sprea
     if even_spread:
         number_of_rays = int(np.round(np.sqrt(number_of_rays))**2)
 
-    ray_directions = torch.zeros([])
-    camera_positions = torch.zeros([])
-    for i in range(len(data["frames"])):
+    # Preallocate memory for ray_directions and camera_positions
+    num_frames = len(data["frames"])
+    ray_directions = torch.zeros((num_frames * number_of_rays, 3)) if not camera_ray else torch.zeros((num_frames, 3))
+    camera_positions = torch.zeros((num_frames, 3))
+
+    for i in range(num_frames):
         transform_matrix, rotation, file_path, camera_angle_x = get_data_from_index(data, i)
 
         if camera_ray:
             current_ray_directions = transform_matrix[:3, 2].unsqueeze(0) * -1
-
+            ray_directions[i] = current_ray_directions
         else:
-            current_ray_directions = generate_rays(number_of_rays, transform_matrix, camera_angle_x, even_spread=even_spread)
+            current_ray_directions = generate_rays(number_of_rays, transform_matrix, camera_angle_x,
+                                                   even_spread=even_spread)
+            ray_directions[i * number_of_rays:(i + 1) * number_of_rays] = current_ray_directions
 
-        ray_directions = current_ray_directions if len(ray_directions.shape) == 0 else torch.cat(
-            [ray_directions, current_ray_directions], 0)
-        camera_positions = transform_matrix[:3, 3].unsqueeze(0) if len(camera_positions.shape) == 0 else torch.cat(
-            [camera_positions, transform_matrix[:3, 3].unsqueeze(0)], 0)
+        camera_positions[i] = transform_matrix[:3, 3]
 
     delta_forsamples = delta_step*torch.arange(num_samples + 1)[1:].repeat(number_of_rays * len(data["frames"]))\
         .unsqueeze(1)
@@ -247,11 +368,12 @@ def main():
     None
     """
     number_of_rays = 9
-    num_samples = 13
-    delta_step = 0.3
+    num_samples = 220
+    delta_step = 0.01
     even_spread = True
     camera_ray = False
-    points_distance = 0.9
+    points_distance = 0.15
+    gridsize = [100, 100, 100]
 
     data_folder = "D:\9.programming\Plenoxels\data"
     object_folders = ['chair', 'drums', 'ficus', 'hotdog', 'lego', 'materials', 'mic', 'ship']
@@ -259,7 +381,10 @@ def main():
     with open(f"{data_folder}/{object_folders[0]}/transforms_train.json", "r") as f:
         data = json.load(f)
 
-    samples_interval, camera_positions, ray_directions = sample_camera_rays(data,
+    import time
+    t0 = time.time()
+
+    samples_interval, camera_positions, ray_directions = sample_camera_rays_batched(data,
                                                                             number_of_rays=number_of_rays,
                                                                             num_samples=num_samples,
                                                                             delta_step=delta_step,
@@ -267,11 +392,13 @@ def main():
                                                                             camera_ray=camera_ray
                                                                             )
 
-    grid_indices, grid_cells, meshgrid, grid_grid = get_grid(19, 19, 19, points_distance=points_distance, info_size=4)
+    grid_indices, grid_cells, meshgrid, grid_grid = get_grid(gridsize[0], gridsize[1], gridsize[2], points_distance=points_distance, info_size=4)
 
     # visualize_rays_3d(ray_directions, camera_positions, grid_indices,samples_interval)
     # visualize_rays_3d(ray_directions, torch.repeat_interleave(camera_positions, number_of_rays, 0),
     #                   samples_interval[num_samples*number_of_rays*10:num_samples*(number_of_rays*10 + 2)])
+
+
 
     edge_matching_points = get_points(grid_indices, samples_interval, points_distance)
     edge_matching_points = edge_matching_points.reshape([edge_matching_points.shape[0] * edge_matching_points.shape[1],
@@ -280,16 +407,21 @@ def main():
     selected_points = selected_points.view([int(selected_points.shape[0] / 8), 8, 3])
 
     # todo put in function and fix cases where point is out of grid (y,x,z)
-    index = 700
+    index = 800
     temp = torch.cat(
         [grid_grid[tuple(s.tolist())].unsqueeze(0) for i in [index * num_samples + i for i in range(num_samples)] for s
          in selected_points[i]])
     temp2 = torch.cat([samples_interval[i].unsqueeze(0) for i in
                        [index * num_samples + i for i in range(num_samples)]], 0)
+
+    print(time.time() - t0)
+
     visualize_rays_3d(ray_directions, [], temp, temp2)
 
+    print(grid_indices.shape, samples_interval.shape)
 
 if __name__ == "__main__":
+
     printi("start")
     main()
     printi("end")

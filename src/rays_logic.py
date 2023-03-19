@@ -140,6 +140,38 @@ def read_data(data_path):
     return data
 
 
+def sample_camera_rays(data, number_of_rays, num_samples, delta_step, even_spread, camera_ray):
+
+    if even_spread:
+        number_of_rays = int(np.round(np.sqrt(number_of_rays))**2)
+
+    ray_directions = torch.zeros([])
+    camera_positions = torch.zeros([])
+    for i in range(len(data["frames"])):
+        transform_matrix, rotation, file_path, camera_angle_x = get_data_from_index(data, i)
+
+        if camera_ray:
+            current_ray_directions = transform_matrix[:3, 2].unsqueeze(0) * -1
+
+        else:
+            current_ray_directions = generate_rays(number_of_rays, transform_matrix, camera_angle_x, even_spread=even_spread)
+
+        ray_directions = current_ray_directions if len(ray_directions.shape) == 0 else torch.cat(
+            [ray_directions, current_ray_directions], 0)
+        camera_positions = transform_matrix[:3, 3].unsqueeze(0) if len(camera_positions.shape) == 0 else torch.cat(
+            [camera_positions, transform_matrix[:3, 3].unsqueeze(0)], 0)
+
+    delta_forsamples = delta_step*torch.arange(num_samples + 1)[1:].repeat(number_of_rays * len(data["frames"]))\
+        .unsqueeze(1)
+
+    camera_positions_forsamples = torch.repeat_interleave(camera_positions, num_samples*number_of_rays, 0)
+
+    ray_directions_forsamples = torch.repeat_interleave(ray_directions, num_samples, 0)
+    samples_interval = camera_positions_forsamples + ray_directions_forsamples * delta_forsamples
+
+    return samples_interval, camera_positions, ray_directions
+
+
 def main():
     """
     This function reads a dataset of 3D object transformations, generates camera rays, and visualizes
@@ -161,49 +193,31 @@ def main():
     Returns:
     None
     """
-    data_folder = "D:\9.programming\Plenoxels\data"
-    object_folders = ['chair', 'drums', 'ficus', 'hotdog', 'lego', 'materials', 'mic', 'ship']
-    path = f"{data_folder}\{object_folders[0]}/transforms_train.json"
-    data = read_data(path)
-
-    number_of_rays = 4
-    delta_step = 0.2
+    number_of_rays = 9
     num_samples = 5
+    delta_step = 0.2
     even_spread = True
     camera_ray = False
 
-    if even_spread:
-        number_of_rays = int(np.round(np.sqrt(number_of_rays))**2)
+    data_folder = "D:\9.programming\Plenoxels\data"
+    object_folders = ['chair', 'drums', 'ficus', 'hotdog', 'lego', 'materials', 'mic', 'ship']
 
-    ray_directions = torch.zeros([])
-    camera_positions = torch.zeros([])
-    for i in range(len(data["frames"])):
-        transform_matrix, rotation, file_path, camera_angle_x = get_data_from_index(data, i)
+    with open(f"{data_folder}/{object_folders[0]}/transforms_train.json", "r") as f:
+        data = json.load(f)
 
-        if camera_ray:
-            current_ray_directions = transform_matrix[:3, 2].unsqueeze(0) * -1
-
-        else:
-            current_ray_directions = generate_rays(number_of_rays, transform_matrix, camera_angle_x, even_spread=True)
-
-        ray_directions = current_ray_directions if len(ray_directions.shape) == 0 else torch.cat(
-            [ray_directions, current_ray_directions], 0)
-        camera_positions = transform_matrix[:3, 3].unsqueeze(0) if len(camera_positions.shape) == 0 else torch.cat(
-            [camera_positions, transform_matrix[:3, 3].unsqueeze(0)], 0)
-
-    delta_forsamples = delta_step*torch.arange(num_samples + 1)[1:].repeat(number_of_rays * len(data["frames"]))\
-        .unsqueeze(1)
-
-    camera_positions_forsamples = torch.repeat_interleave(camera_positions, num_samples*number_of_rays, 0)
-
-    ray_directions_forsamples = torch.repeat_interleave(ray_directions, num_samples, 0)
-    samples_interval = camera_positions_forsamples + ray_directions_forsamples * delta_forsamples
+    samples_interval, camera_positions, ray_directions = sample_camera_rays(data,
+                                                                            number_of_rays=number_of_rays,
+                                                                            num_samples=num_samples,
+                                                                            delta_step=delta_step,
+                                                                            even_spread=even_spread,
+                                                                            camera_ray=camera_ray
+                                                                            )
 
     grid_indices, grid_cells = get_grid(9, 9, 9, points_distance=1.2, info_size=4)
 
     # visualize_rays_3d(ray_directions, camera_positions, grid_indices,samples_interval)
     visualize_rays_3d(ray_directions, torch.repeat_interleave(camera_positions, number_of_rays, 0),
-                      samples_interval[num_samples*number_of_rays*11:11*num_samples*number_of_rays + num_samples])
+                      samples_interval[num_samples*number_of_rays*10:num_samples*(number_of_rays*10 + 2)])
 
 
 if __name__ == "__main__":

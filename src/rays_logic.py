@@ -97,7 +97,7 @@ def generate_rays_batched(number_of_rays, transform_matricies, camera_angle_x, e
     camera_y_axis = transform_matricies[:, :3, 1]
     camera_z_axis = -transform_matricies[:, :3, 2]
     aspect_ratio = camera_x_axis.norm(dim=1) / camera_y_axis.norm(dim=1)
-    even_spread = True
+
     if even_spread:
         num_rays_sqrt = np.round(np.sqrt(number_of_rays))
 
@@ -161,12 +161,16 @@ def collect_cell_information_via_indices(A, B):
 
     # Calculate the indices along each dimension of B
     idx1, idx2, idx3 = A[:, 0], A[:, 1], A[:, 2]
+
+    # wrap around coordinates that pass the grid. todo needs an alternative approach
     idx1 %= X
     idx2 %= Y
     idx3 %= Z
 
     # Use advanced indexing to get the values
     output = B[idx1, idx2, idx3]
+    output = output.reshape([int(output.shape[0] / 8), 8, 3])
+
     return output
 
 
@@ -363,12 +367,12 @@ def main():
     Returns:
     None
     """
-    number_of_rays = 9
-    num_samples = 356
-    delta_step = 0.01
-    even_spread = True
+    number_of_rays = 16
+    num_samples = 5
+    delta_step = 0.5
+    even_spread = False
     camera_ray = False
-    points_distance = 0.05
+    points_distance = 0.25
     gridsize = [256, 256, 256]
 
     data_folder = r"D:\9.programming\Plenoxels\data"
@@ -391,30 +395,32 @@ def main():
                                                                                     camera_ray=camera_ray
                                                                                     )
 
-    # visualize_rays_3d(ray_directions, camera_positions, grid_indices,samples_interval)
-    # visualize_rays_3d(ray_directions, torch.repeat_interleave(camera_positions, number_of_rays, 0),
-    #                   samples_interval[num_samples*number_of_rays*10:num_samples*(number_of_rays*10 + 2)])
-
     edge_matching_points = get_grid_points_indices(grid_indices, samples_interval, points_distance)
     edge_matching_points = edge_matching_points.reshape([edge_matching_points.shape[0] * edge_matching_points.shape[1],
                                                          edge_matching_points.shape[2]])
     selected_points = collect_cell_information_via_indices(edge_matching_points, meshgrid)
-    selected_points = selected_points.view([int(selected_points.shape[0] / 8), 8, 3])
 
     print(time.time() - t0)
 
-    # todo put in function and fix cases where point is out of grid (y,x,z)
-    index = 20
-    temp = torch.cat(
-        [grid_grid[tuple(s.tolist())].unsqueeze(0) for i in [index * num_samples + i for i in range(num_samples)] for s
-         in selected_points[i]])
-    temp2 = torch.cat([samples_interval[i].unsqueeze(0) for i in
-                       [index * num_samples + i for i in range(num_samples)]], 0)
+    # -- visulize grid
+    # visualize_rays_3d(ray_directions, [], grid_indices)
 
+    # -- visulize camera rays and samples along rays
+    # ray_positions = torch.repeat_interleave(camera_positions, number_of_rays, 0)
+    # sampled_rays = samples_interval[num_samples*number_of_rays*10:num_samples*(number_of_rays*10 + number_of_rays)]
+    # visualize_rays_3d(ray_directions, ray_positions, sampled_rays)
+
+    # -- visulize grid around sampled points of ray
+    index = 222
+
+    # choose grid points around samples along a ray
+    temp = selected_points[index * num_samples: index * num_samples + num_samples].reshape([num_samples*8, 3])
+    temp = grid_grid[temp[:, 0], temp[:, 1], temp[:, 2]]
+
+    # choose samples along a ray
+    temp2 = samples_interval[index * num_samples: index * num_samples + num_samples]
 
     visualize_rays_3d(ray_directions, [], temp, temp2)
-
-    print(grid_indices.shape, samples_interval.shape)
 
 
 if __name__ == "__main__":

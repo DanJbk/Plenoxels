@@ -118,12 +118,12 @@ def generate_rays_batched(number_of_rays, transform_matricies, camera_angle_x, e
 
     # Get the u and v values from ray_indices
     u_values, v_values = ray_indices[:, :, 0].unsqueeze(-1), ray_indices[:, :, 1].unsqueeze(-1)
-    u_values = u_values.expand(100, 9, 3)
-    v_values = v_values.expand(100, 9, 3)
+    u_values = u_values.expand(100, number_of_rays, 3)
+    v_values = v_values.expand(100, number_of_rays, 3)
 
-    camera_x_axis = camera_x_axis.unsqueeze(1).expand(100, 9, 3)
-    camera_y_axis = camera_y_axis.unsqueeze(1).expand(100, 9, 3)
-    camera_z_axis = camera_z_axis.unsqueeze(1).expand(100, 9, 3)
+    camera_x_axis = camera_x_axis.unsqueeze(1).expand(100, number_of_rays, 3)
+    camera_y_axis = camera_y_axis.unsqueeze(1).expand(100, number_of_rays, 3)
+    camera_z_axis = camera_z_axis.unsqueeze(1).expand(100, number_of_rays, 3)
 
     directions = u_values * camera_x_axis + v_values * camera_y_axis + camera_z_axis
 
@@ -156,25 +156,18 @@ def get_grid_points_indices(grid_indices, samples_interval, points_distance):
 
 
 def collect_cell_information_via_indices(A, B):
-    # A = torch.tensor([[0, 1, 8]]*K)  # Shape: [K, 3]
-    # B = torch.randn(X, Y, Z, N)  # Shape: [X, Y, Z, N]
 
     X, Y, Z, N = B.shape
 
-    # Define the desired column order
-    # column_order = torch.tensor([1, 0, 2])
+    # Calculate the indices along each dimension of B
+    idx1, idx2, idx3 = A[:, 0], A[:, 1], A[:, 2]
+    idx1 %= X
+    idx2 %= Y
+    idx3 %= Z
 
-    # Reorder the columns of A
-    # A = torch.index_select(A, 1, column_order)
-
-    # Reshape B to [X*Y*Z, N]
-    B_flat = B.reshape(-1, N)  # Shape: [X*Y*Z, N]
-
-    # Calculate flat indices from A
-    indices = A[:, 0] * Y * Z + A[:, 1] * Z + A[:, 2]
-
-    # Gather the elements from B_flat using the indices
-    return torch.gather(B_flat, 0, indices.view(-1, 1).expand(-1, N))
+    # Use advanced indexing to get the values
+    output = B[idx1, idx2, idx3]
+    return output
 
 
 def get_grid(sx, sy, sz, points_distance=0.5, info_size=3):
@@ -371,12 +364,12 @@ def main():
     None
     """
     number_of_rays = 9
-    num_samples = 220
-    delta_step = 0.03
+    num_samples = 356
+    delta_step = 0.01
     even_spread = True
     camera_ray = False
-    points_distance = 0.15
-    gridsize = [100, 100, 100]
+    points_distance = 0.05
+    gridsize = [256, 256, 256]
 
     data_folder = r"D:\9.programming\Plenoxels\data"
     object_folders = ['chair', 'drums', 'ficus', 'hotdog', 'lego', 'materials', 'mic', 'ship']
@@ -385,6 +378,9 @@ def main():
         data = json.load(f)
 
     import time
+
+    grid_indices, grid_cells, meshgrid, grid_grid = get_grid(gridsize[0], gridsize[1], gridsize[2],
+                                                             points_distance=points_distance, info_size=4)
     t0 = time.time()
 
     samples_interval, camera_positions, ray_directions = sample_camera_rays_batched(data,
@@ -394,9 +390,6 @@ def main():
                                                                                     even_spread=even_spread,
                                                                                     camera_ray=camera_ray
                                                                                     )
-
-    grid_indices, grid_cells, meshgrid, grid_grid = get_grid(gridsize[0], gridsize[1], gridsize[2],
-                                                             points_distance=points_distance, info_size=4)
 
     # visualize_rays_3d(ray_directions, camera_positions, grid_indices,samples_interval)
     # visualize_rays_3d(ray_directions, torch.repeat_interleave(camera_positions, number_of_rays, 0),
@@ -408,15 +401,16 @@ def main():
     selected_points = collect_cell_information_via_indices(edge_matching_points, meshgrid)
     selected_points = selected_points.view([int(selected_points.shape[0] / 8), 8, 3])
 
+    print(time.time() - t0)
+
     # todo put in function and fix cases where point is out of grid (y,x,z)
-    index = 800
+    index = 20
     temp = torch.cat(
         [grid_grid[tuple(s.tolist())].unsqueeze(0) for i in [index * num_samples + i for i in range(num_samples)] for s
          in selected_points[i]])
     temp2 = torch.cat([samples_interval[i].unsqueeze(0) for i in
                        [index * num_samples + i for i in range(num_samples)]], 0)
 
-    print(time.time() - t0)
 
     visualize_rays_3d(ray_directions, [], temp, temp2)
 

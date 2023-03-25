@@ -36,7 +36,7 @@ def sample_camera_rays_batched(data, imgs, number_of_rays, num_samples, delta_st
         current_ray_directions = transform_matricies[:, :3, 2].unsqueeze(0) * -1
 
     else:
-        current_ray_directions = generate_rays_batched(imgs, number_of_rays, transform_matricies, camera_angle_x,
+        current_ray_directions, pixels_to_rays = generate_rays_batched(imgs, number_of_rays, transform_matricies, camera_angle_x,
                                                        even_spread=even_spread)
 
     ray_directions = current_ray_directions
@@ -90,29 +90,26 @@ def tensor_linspace(start, end, steps=10):
     out = start_w * start + end_w * end
     return out
 
-
 def generate_rays_batched(imgs, number_of_rays, transform_matricies, camera_angle_x, even_spread=False):
     """
-    Generates a batch of ray directions for a given set of cameras, number of rays, and field of view (FOV) in the x direction.
+        Generates rays for each camera and corresponding pixel indices.
 
-    Args:
-        number_of_rays (int): The number of rays to generate for each camera.
-        transform_matricies (torch.Tensor): A tensor of shape (num_cameras, 4, 4) containing the transformation matrices for each camera.
-        camera_angle_x (float): The camera's field of view (FOV) in the x direction (in radians).
-        even_spread (bool, optional): If True, rays are evenly distributed across the camera's FOV. If False (default), rays are distributed randomly.
+        Args:
+            imgs (torch.Tensor): Batch of input images (B, H, W).
+            number_of_rays (int): Number of rays to generate for each camera.
+            transform_matricies (torch.Tensor): Transformation matrices for cameras (B, 4, 4).
+            camera_angle_x (float): Horizontal field of view of the camera.
+            even_spread (bool, optional): Whether to generate rays with even spacing. Defaults to False (random spacing).
 
-    Returns:
-        torch.Tensor: A tensor of shape (num_cameras * number_of_rays, 3) containing the ray directions for each camera.
+        Returns:
+            torch.Tensor: Generated ray directions (B * number_of_rays, 3).
+            torch.Tensor: Pixel colors corresponding to the generated rays.
+        """
 
-    Example:
-        >>> transform_matricies = torch.rand(10, 4, 4)  # 10 random transformation matrices
-        >>> camera_angle_x = np.pi / 3  # 60-degree FOV
-        >>> ray_directions = generate_rays_batched(100, transform_matricies, camera_angle_x, even_spread=True)
-        >>> ray_directions.shape
-        torch.Size([1000, 3])  # 100 rays for each of the 10 cameras
-    """
 
-    # transform_matricies, file_paths, camera_angle_x = preprocess_data(data)
+    num_cameras = transform_matricies.shape[0]
+
+    # Extract camera axes from transformation matrices
     camera_x_axis = transform_matricies[:, :3, 0]
     camera_y_axis = transform_matricies[:, :3, 1]
     camera_z_axis = -transform_matricies[:, :3, 2]
@@ -121,56 +118,54 @@ def generate_rays_batched(imgs, number_of_rays, transform_matricies, camera_angl
     if even_spread:
         num_rays_sqrt = np.round(np.sqrt(number_of_rays))
 
+        # Compute evenly spaced u and v values for rays
         start = torch.tensor([-0.5 * camera_angle_x]).repeat(aspect_ratio.shape)
         u_values = torch.linspace(-0.5 * camera_angle_x, 0.5 * camera_angle_x, int(num_rays_sqrt)).unsqueeze(0).repeat(
             [aspect_ratio.shape[0], 1])
-        v_values = tensor_linspace(start / aspect_ratio, -start / aspect_ratio, int(num_rays_sqrt))
+        v_values = -tensor_linspace(start / aspect_ratio, -start / aspect_ratio, int(num_rays_sqrt))
 
-        start2= torch.tensor([imgs.shape[1]/2]).repeat(aspect_ratio.shape)
-        u_values2 = torch.linspace(-(imgs.shape[0]/2), (imgs.shape[0]/2), int(num_rays_sqrt)).unsqueeze(0).repeat(
-            [aspect_ratio.shape[0], 1])
-        v_values2 = tensor_linspace(-start2 , start2, int(num_rays_sqrt))
-        u_values2 -= u_values2.min()
-        v_values2 -= v_values2.min()
-        v_values2 = torch.clip(v_values2, max=imgs.shape[0]-1).round().type(torch.long)
-        u_values2 = torch.clip(u_values2, max=imgs.shape[1]-1).round().type(torch.long)
-
-        # start2= torch.tensor([400]).repeat(aspect_ratio.shape)
-        # u_values2 = torch.linspace(-start, start, int(num_rays_sqrt)).unsqueeze(0).repeat([aspect_ratio.shape[0], 1])
-        # v_values2 = tensor_linspace(-start2, start2, int(num_rays_sqrt))
-
+        # Calculate ray indices using Cartesian product
         ray_indices = batched_cartesian_prod(u_values, v_values)
-        pixel_indices = batched_cartesian_prod(u_values2, v_values2) # torch.Size([100, 9, 2])
 
     else:
         # Generate random ray indices
         ray_indices = torch.rand(transform_matricies.shape[0], number_of_rays,
                                  2)  # Generate random numbers in the range [0, 1)
 
-        pixel_indices = torch.clone(ray_indices)
-        pixel_indices[:, :, 0] = pixel_indices[:, :, 0] * imgs.shape[1]
-        pixel_indices[:, :, 1] = pixel_indices[:, :, 1] * imgs.shape[2]
-        pixel_indices = pixel_indices.round().type(torch.long) # torch.Size([100, 9, 2])
-
         # Scale and shift the ray indices to match the camera's FOV
         ray_indices[:, :, 0] = camera_angle_x * (ray_indices[:, :, 0] - 0.5)
-        ray_indices[:, :, 1] = ((camera_angle_x * (1 / aspect_ratio)).unsqueeze(1) * (ray_indices[:, :, 1] - 0.5))
+        ray_indices[:, :, 1] = -((camera_angle_x * (1 / aspect_ratio)).unsqueeze(1) * (ray_indices[:, :, 1] - 0.5))
+
+    # normalize to image space
+    pixel_indices = ray_indices.clone()
+    pixel_indices[:, :, 0] = (pixel_indices[:, :, 0]/camera_angle_x) + 0.5
+    pixel_indices[:, :, 1] = -(pixel_indices[:, :, 1]/((camera_angle_x * (1 / aspect_ratio)).unsqueeze(1))) + 0.5
+
+    # Clamp pixel indices to image dimensions
+    pixel_indices[:, :, 0] = (imgs.shape[1]*pixel_indices[:, :, 0]).round().clamp(max=imgs.shape[1] - 1)
+    pixel_indices[:, :, 1] = (imgs.shape[2]*pixel_indices[:, :, 1]).round().clamp(max=imgs.shape[2] - 1)
+    pixel_indices = pixel_indices.to(torch.long)
+
+    # Map pixel indices to camera indices
+    camera_to_ray = torch.repeat_interleave(torch.arange(0, transform_matricies.shape[0]), number_of_rays, 0)
+    pixel_indices = pixel_indices.reshape([pixel_indices.shape[0] * pixel_indices.shape[1], pixel_indices.shape[2]])
+    pixels_to_rays = imgs[camera_to_ray, pixel_indices[:, 0], pixel_indices[:, 1]]
 
     # Get the u and v values from ray_indices
     u_values, v_values = ray_indices[:, :, 0].unsqueeze(-1), ray_indices[:, :, 1].unsqueeze(-1)
-    u_values = u_values.expand(100, number_of_rays, 3)
-    v_values = v_values.expand(100, number_of_rays, 3)
+    u_values = u_values.expand(num_cameras, number_of_rays, 3)
+    v_values = v_values.expand(num_cameras, number_of_rays, 3)
 
-    camera_x_axis = camera_x_axis.unsqueeze(1).expand(100, number_of_rays, 3)
-    camera_y_axis = camera_y_axis.unsqueeze(1).expand(100, number_of_rays, 3)
-    camera_z_axis = camera_z_axis.unsqueeze(1).expand(100, number_of_rays, 3)
+    # Expand camera axes for broadcasting
+    camera_x_axis = camera_x_axis.unsqueeze(1).expand(num_cameras, number_of_rays, 3)
+    camera_y_axis = camera_y_axis.unsqueeze(1).expand(num_cameras, number_of_rays, 3)
+    camera_z_axis = camera_z_axis.unsqueeze(1).expand(num_cameras, number_of_rays, 3)
 
+    # Compute ray directions and normalize
     directions = u_values * camera_x_axis + v_values * camera_y_axis + camera_z_axis
-
     ray_directions = directions / directions.norm(dim=2).unsqueeze(-1)
 
-    return ray_directions.reshape(ray_directions.shape[0] * number_of_rays, -1)
-
+    return ray_directions.reshape(ray_directions.shape[0] * number_of_rays, -1), pixels_to_rays
 
 def get_grid_points_indices(grid_indices, samples_interval, points_distance):
     """
@@ -336,10 +331,16 @@ def visualize_rays_3d(ray_directions, camera_positions, red=None, green=None, or
         origin_z = camera_positions[:, 2]
 
         # Plot 3D vectors
-        for i in range(ray_directions.shape[0]):
-            ax.quiver(origin_x[i], origin_y[i], origin_z[i],
-                      ray_directions[i, 0], ray_directions[i, 1], ray_directions[i, 2],
-                      color='b', alpha=0.5)
+        for i in (range(ray_directions.shape[0])):
+            if (i-1)%25 == 0:
+
+                ax.quiver(origin_x[i], origin_y[i], origin_z[i],
+                          ray_directions[i, 0], ray_directions[i, 1], ray_directions[i, 2],
+                          color='r', alpha=0.5)
+            else:
+                ax.quiver(origin_x[i], origin_y[i], origin_z[i],
+                          ray_directions[i, 0], ray_directions[i, 1], ray_directions[i, 2],
+                          color='b', alpha=0.5)
 
     for item, color in zip([red, green, orange], ['r', 'g', 'orange']):
         if not item is None:
@@ -429,10 +430,10 @@ def main():
     Returns:
     None
     """
-    number_of_rays = 16
+    number_of_rays = 25
     num_samples = 5
     delta_step = 0.5
-    even_spread = True
+    even_spread = False
     camera_ray = False
     points_distance = 0.25
     gridsize = [16, 16, 16]
@@ -470,6 +471,7 @@ def main():
     ray_positions = torch.repeat_interleave(camera_positions, number_of_rays, 0)
     sampled_rays = samples_interval[num_samples*number_of_rays*10:num_samples*(number_of_rays*10 + number_of_rays)]
     # visualize_rays_3d(ray_directions, ray_positions, sampled_rays, grid_indices)
+    visualize_rays_3d(ray_directions, ray_positions, sampled_rays)
 
     # -- visulize grid around sampled points of ray
     index = 22
@@ -481,7 +483,7 @@ def main():
     # choose samples along a ray
     temp2 = samples_interval[index * num_samples * number_of_rays: index * num_samples * number_of_rays + num_samples * number_of_rays]
 
-    visualize_rays_3d(ray_directions, [], temp, temp2)
+    # visualize_rays_3d(ray_directions, [], temp, temp2)
 
 
 if __name__ == "__main__":

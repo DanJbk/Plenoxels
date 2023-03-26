@@ -225,11 +225,9 @@ def get_grid(sx, sy, sz, points_distance=0.5, info_size=3):
 
     # todo change to: coordsx, coordsy, coordsz = torch.meshgrid(grindx_indices, grindy_indices, grindz_indices, indexing='ij')
     # todo then stack in dim=-1, then update the rest of the code
-    coordsz, coordsx, coordsy = torch.meshgrid(grindz_indices, grindx_indices, grindy_indices, indexing='ij')
+    coordsx, coordsy, coordsz  = torch.meshgrid(grindx_indices, grindy_indices, grindz_indices,  indexing='ij')
 
-    meshgrid = torch.stack([coordsx, coordsy, coordsz]).T
-    print(f"{torch.stack([coordsx, coordsy, coordsz], dim=-1).shape=}")
-    print(f"{torch.stack([coordsx, coordsy, coordsz]).T.shape=}")
+    meshgrid = torch.stack([coordsx, coordsy, coordsz], dim=-1)
 
     # center grid
     coordsx, coordsy, coordsz = coordsx - np.ceil(sx / 2) + 1, coordsy - np.ceil(sy / 2) + 1, coordsz - np.ceil(
@@ -241,7 +239,7 @@ def get_grid(sx, sy, sz, points_distance=0.5, info_size=3):
     # make it so no points of the grid are underground
     coordsz = coordsz - coordsz.min()
 
-    grid_grid = torch.stack([coordsx, coordsy, coordsz]).T
+    grid_grid = torch.stack([coordsx, coordsy, coordsz], dim=-1)
     grid_coords = grid_grid.reshape(sx * sy * sz, 3)
 
     grid_cells = torch.zeros_like(grid_grid)
@@ -476,6 +474,7 @@ def main():
     print(f"{edge_matching_points.shape=}\n{edge_matching_points[0]=}")
     print(f"{selected_points.shape=}\n{selected_points[0]=}")
     print(f"{meshgrid.shape=}\n{meshgrid[selected_points[0][0][0], selected_points[0][0][1], selected_points[0][0][2]]}\n")
+    print(f"{grid_grid.shape=}\n{grid_grid[selected_points[0][0][0], selected_points[0][0][1], selected_points[0][0][2]]}\n")
     trilinear_interpolation(normalized_samples_for_indecies, grid_cells)
 
     print(time.time() - t0)
@@ -490,7 +489,7 @@ def main():
     # visualize_rays_3d(ray_directions, ray_positions, sampled_rays)
 
     # -- visulize grid around sampled points of ray
-    index = 32
+    index = 99
 
     # choose grid points around samples along a ray
     temp = selected_points[index * num_samples * number_of_rays: index * num_samples * number_of_rays + num_samples * number_of_rays].reshape([num_samples*number_of_rays*8, 3])

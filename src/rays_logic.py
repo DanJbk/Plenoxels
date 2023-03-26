@@ -167,22 +167,18 @@ def generate_rays_batched(imgs, number_of_rays, transform_matricies, camera_angl
 
     return ray_directions.reshape(ray_directions.shape[0] * number_of_rays, -1), pixels_to_rays
 
-def get_grid_points_indices(grid_indices, samples_interval, points_distance):
+def get_grid_points_indices(normalized_samples_for_indecies):
     """
     Given grid indices, a samples interval, and a points distance, this function calculates the indices of
     grid points surrounding each input point. It returns the indices of the 8 corners of the grid cell
     that encloses each input point.
 
     Args:
-        grid_indices (torch.Tensor): A tensor of shape (N, 3) containing the grid indices for each input point.
-        samples_interval (torch.Tensor): A tensor of shape (K,3) containing the interval of samples in each dimension.
-        points_distance (float): The distance between grid points along each dimension.
-
+            normalized_samples_for_indecie
     Returns:
         torch.Tensor: A tensor of shape (N, 8, 3) containing the indices of the 8 corners of the grid cell
                       that encloses each input point.
     """
-    normalized_samples_for_indecies = ((samples_interval - grid_indices.min(0)[0]) / points_distance)
 
     ceil_x = torch.ceil(normalized_samples_for_indecies[:, 0]).unsqueeze(1)
     ceil_y = torch.ceil(normalized_samples_for_indecies[:, 1]).unsqueeze(1)
@@ -223,11 +219,17 @@ def collect_cell_information_via_indices(A, B):
 
 
 def get_grid(sx, sy, sz, points_distance=0.5, info_size=3):
+
+
     grindx_indices, grindy_indices, grindz_indices = torch.arange(sx), torch.arange(sy), torch.arange(sz)
 
+    # todo change to: coordsx, coordsy, coordsz = torch.meshgrid(grindx_indices, grindy_indices, grindz_indices, indexing='ij')
+    # todo then stack in dim=-1, then update the rest of the code
     coordsz, coordsx, coordsy = torch.meshgrid(grindz_indices, grindx_indices, grindy_indices, indexing='ij')
 
     meshgrid = torch.stack([coordsx, coordsy, coordsz]).T
+    print(f"{torch.stack([coordsx, coordsy, coordsz], dim=-1).shape=}")
+    print(f"{torch.stack([coordsx, coordsy, coordsz]).T.shape=}")
 
     # center grid
     coordsx, coordsy, coordsz = coordsx - np.ceil(sx / 2) + 1, coordsy - np.ceil(sy / 2) + 1, coordsz - np.ceil(
@@ -409,6 +411,13 @@ def load_image_data(data_folder, object_folder):
 
     return data, imgs
 
+def normalize_samples_for_indecies(grid_indices, samples_interval, points_distance):
+    return ((samples_interval - grid_indices.min(0)[0]) / points_distance)
+
+def trilinear_interpolation(normalized_samples_for_indecies, grid_cells):
+    return
+
+
 def main():
     """
     This function reads a dataset of 3D object transformations, generates camera rays, and visualizes
@@ -431,12 +440,12 @@ def main():
     None
     """
     number_of_rays = 25
-    num_samples = 5
-    delta_step = 0.5
+    num_samples = 100
+    delta_step = 0.05
     even_spread = False
     camera_ray = False
-    points_distance = 0.25
-    gridsize = [16, 16, 16]
+    points_distance = 0.12*4
+    gridsize = [16, 17, 18]
 
     data_folder = r"D:\9.programming\Plenoxels\data"
     object_folders = ['chair', 'drums', 'ficus', 'hotdog', 'lego', 'materials', 'mic', 'ship']
@@ -457,10 +466,17 @@ def main():
                                                                                     camera_ray=camera_ray
                                                                                     )
 
-    edge_matching_points = get_grid_points_indices(grid_indices, samples_interval, points_distance)
+    normalized_samples_for_indecies = normalize_samples_for_indecies(grid_indices, samples_interval, points_distance)
+    edge_matching_points = get_grid_points_indices(normalized_samples_for_indecies)
     edge_matching_points = edge_matching_points.reshape([edge_matching_points.shape[0] * edge_matching_points.shape[1],
                                                          edge_matching_points.shape[2]])
     selected_points = collect_cell_information_via_indices(edge_matching_points, meshgrid)
+
+    print(f"{normalized_samples_for_indecies.shape=}\n{normalized_samples_for_indecies[0]=}")
+    print(f"{edge_matching_points.shape=}\n{edge_matching_points[0]=}")
+    print(f"{selected_points.shape=}\n{selected_points[0]=}")
+    print(f"{meshgrid.shape=}\n{meshgrid[selected_points[0][0][0], selected_points[0][0][1], selected_points[0][0][2]]}\n")
+    trilinear_interpolation(normalized_samples_for_indecies, grid_cells)
 
     print(time.time() - t0)
 
@@ -471,10 +487,10 @@ def main():
     ray_positions = torch.repeat_interleave(camera_positions, number_of_rays, 0)
     sampled_rays = samples_interval[num_samples*number_of_rays*10:num_samples*(number_of_rays*10 + number_of_rays)]
     # visualize_rays_3d(ray_directions, ray_positions, sampled_rays, grid_indices)
-    visualize_rays_3d(ray_directions, ray_positions, sampled_rays)
+    # visualize_rays_3d(ray_directions, ray_positions, sampled_rays)
 
     # -- visulize grid around sampled points of ray
-    index = 22
+    index = 32
 
     # choose grid points around samples along a ray
     temp = selected_points[index * num_samples * number_of_rays: index * num_samples * number_of_rays + num_samples * number_of_rays].reshape([num_samples*number_of_rays*8, 3])
@@ -483,7 +499,7 @@ def main():
     # choose samples along a ray
     temp2 = samples_interval[index * num_samples * number_of_rays: index * num_samples * number_of_rays + num_samples * number_of_rays]
 
-    # visualize_rays_3d(ray_directions, [], temp, temp2)
+    visualize_rays_3d(ray_directions, [], temp, temp2)
 
 
 if __name__ == "__main__":

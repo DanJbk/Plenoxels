@@ -222,9 +222,6 @@ def get_grid(sx, sy, sz, points_distance=0.5, info_size=3):
 
 
     grindx_indices, grindy_indices, grindz_indices = torch.arange(sx), torch.arange(sy), torch.arange(sz)
-
-    # todo change to: coordsx, coordsy, coordsz = torch.meshgrid(grindx_indices, grindy_indices, grindz_indices, indexing='ij')
-    # todo then stack in dim=-1, then update the rest of the code
     coordsx, coordsy, coordsz  = torch.meshgrid(grindx_indices, grindy_indices, grindz_indices,  indexing='ij')
 
     meshgrid = torch.stack([coordsx, coordsy, coordsz], dim=-1)
@@ -489,10 +486,10 @@ def main():
     # visualize_rays_3d(ray_directions, ray_positions, sampled_rays)
 
     # -- visulize grid around sampled points of ray
-    index = 99
+    index = 23
 
     # choose grid points around samples along a ray
-    temp = selected_points[index * num_samples * number_of_rays: index * num_samples * number_of_rays + num_samples * number_of_rays].reshape([num_samples*number_of_rays*8, 3])
+    temp = selected_points[index * num_samples * number_of_rays: index * num_samples * number_of_rays + num_samples * number_of_rays].reshape([number_of_rays*num_samples*8, 3])
     temp = grid_grid[temp[:, 0], temp[:, 1], temp[:, 2]]
 
     # choose samples along a ray

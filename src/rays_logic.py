@@ -7,6 +7,11 @@ import matplotlib.pyplot as plt
 from logging import info as printi
 from PIL import Image
 
+import numpy as np
+import plotly.graph_objs as go
+import plotly.io as pio
+import matplotlib.colors as mcolors
+
 from mpl_toolkits.mplot3d import Axes3D
 
 log_color = "\x1b[32;1m"
@@ -358,6 +363,50 @@ def visualize_rays_3d(ray_directions, camera_positions, red=None, green=None, or
     plt.show()
 
 
+def visualize_rays_3d_plotly(ray_directions, camera_positions, red=None, green=None, orange=None):
+    fig = go.Figure()
+
+    if len(camera_positions) > 0:
+        origin_x = camera_positions[:, 0]
+        origin_y = camera_positions[:, 1]
+        origin_z = camera_positions[:, 2]
+
+        for i in range(ray_directions.shape[0]):
+            color = 'blue' if (i-1) % 25 != 0 else 'red'
+            alpha = 0.5
+
+            x = np.array([origin_x[i], origin_x[i] + ray_directions[i, 0]])
+            y = np.array([origin_y[i], origin_y[i] + ray_directions[i, 1]])
+            z = np.array([origin_z[i], origin_z[i] + ray_directions[i, 2]])
+
+            fig.add_trace(go.Scatter3d(x=x, y=y, z=z,
+                                       marker=dict(size=0),
+                                       line=dict(color=f'rgba({",".join(map(str, mcolors.to_rgba(color)[:3]))}, {alpha})'),
+                                       showlegend=False))
+
+    for item, color in zip([red, green, orange], ['red', 'green', 'orange']):
+        if item is not None:
+            scatter_x = item[:, 0]
+            scatter_y = item[:, 1]
+            scatter_z = item[:, 2]
+
+            fig.add_trace(go.Scatter3d(x=scatter_x, y=scatter_y, z=scatter_z,
+                                       mode='markers',
+                                       marker=dict(size=5, color=color),
+                                       showlegend=False))
+
+    fig.update_layout(scene=dict(xaxis_title='X', yaxis_title='Y', zaxis_title='Z',
+                                 aspectmode='cube',
+                                 xaxis=dict(range=[-5, 5]),
+                                 yaxis=dict(range=[-5, 5]),
+                                 zaxis=dict(range=[0, 10])),
+                     title="3D Visualization of Evenly Spread Ray Directions within Camera's FOV",
+                     autosize=False, width=800, height=800)
+    pio.write_html(fig, file='visualize_rays_3d.html', auto_open=True)
+
+    # fig.show()
+
+
 def read_data(data_path):
     with open(data_path, "r") as f:
         data = json.load(f)
@@ -409,8 +458,70 @@ def load_image_data(data_folder, object_folder):
 def normalize_samples_for_indecies(grid_indices, samples_interval, points_distance):
     return ((samples_interval - grid_indices.min(0)[0]) / points_distance)
 
-def trilinear_interpolation(normalized_samples_for_indecies, grid_cells):
-    return
+def trilinear_interpolation(normalized_samples_for_indecies, selected_points, grid_cells):
+
+    """
+
+    :param normalized_samples_for_indecies:
+    :param selected_points:
+    :param grid_cells:
+    :return:
+
+    The input tensors:
+    :param    normalized_samples_for_indecies has a shape of (N, 3), which represents N 3D points.
+    :param    selected_points has a shape of (N, 8, 3), which represents 8 corner points for each of the N 3D points.
+    :param    grid_cells has a shape of (X, Y, Z, 3), which represents a 3D grid with XxYxZ cells, where each cell has a 3D value associated with it.
+
+    1. selection0 and selection1:
+        These two tensors are created by reshaping the last 4 and first 4 corner points of each cell in selected_points, respectively.
+        Then, they extract the values from grid_cells corresponding to these corner points.
+
+    2. interpolation_frac_step1:
+        This tensor represents the interpolation fraction for the first dimension.
+        The code multiplies selection1 by this fraction and selection0 by its complement (1 - fraction) and adds them together, yielding newstep.
+
+    3. inteplation_frac_step2:
+        This tensor represents the interpolation fraction for the second dimension.
+        The code performs interpolation for the second dimension using the values computed in step 3 and updates newstep.
+
+    4. inteplation_frac_step3:
+        This tensor represents the interpolation fraction for the third dimension.
+        The code performs interpolation for the third dimension using the values computed in step 4 and updates newstep.
+
+    The final newstep tensor contains the interpolated values at the original input points based on the grid values.
+    """
+
+    inteplation_frac = torch.frac(normalized_samples_for_indecies)
+
+    selection0 = selected_points[:, 4:, :].reshape(selected_points.shape[0]*4, selected_points.shape[-1])
+    selection0 = grid_cells[selection0[:, 0], selection0[:, 1], selection0[:, 2]].reshape(selected_points.shape[0], 4, selected_points.shape[-1])
+    # selection0 = grid_cells[selected_points[:, 4:, 0], selected_points[:, 4:, 1], selected_points[:, 4:, 2]]
+
+    selection1 = selected_points[:, :4, :].reshape(selected_points.shape[0]*4, selected_points.shape[-1])
+    selection1 = grid_cells[selection1[:, 0], selection1[:, 1], selection1[:, 2]].reshape(selected_points.shape[0], 4, selected_points.shape[-1])
+    # selection1 = grid_cells[selected_points[:, :4, 0], selected_points[:, :4, 1], selected_points[:, :4, 2]]
+
+    inteplation_frac_step1 = inteplation_frac[:, 0].unsqueeze(-1).unsqueeze(-1)
+    newstep = (selection1 * inteplation_frac_step1) + (selection0 * (1 - inteplation_frac_step1))
+
+    inteplation_frac_step2 = inteplation_frac[:, 1].unsqueeze(-1).unsqueeze(-1)
+    newstep = (newstep[:, :2] * inteplation_frac_step2) + (newstep[:, 2:] * (1 - inteplation_frac_step2))
+
+    inteplation_frac_step3 = inteplation_frac[:, 2].unsqueeze(-1)
+    newstep = (newstep[:, 0] * inteplation_frac_step3) + (newstep[:, 1] * (1 - inteplation_frac_step3))
+
+    """
+    [['ceil_x', 'ceil_y', 'ceil_z'],
+     ['ceil_x', 'ceil_y', 'floor_z'],
+     ['ceil_x', 'floor_y', 'ceil_z'],
+     ['ceil_x', 'floor_y', 'floor_z'],
+     ['floor_x', 'ceil_y', 'ceil_z'],
+     ['floor_x', 'ceil_y', 'floor_z'],
+     ['floor_x', 'floor_y', 'ceil_z'],
+     ['floor_x', 'floor_y', 'floor_z']]
+     """
+
+    return newstep
 
 
 def main():
@@ -434,13 +545,13 @@ def main():
     Returns:
     None
     """
-    number_of_rays = 25
-    num_samples = 100
+    number_of_rays = 4
+    num_samples = 10
     delta_step = 0.05
-    even_spread = False
+    even_spread = True
     camera_ray = False
-    points_distance = 0.12*4
-    gridsize = [16, 17, 18]
+    points_distance = 0.02*2
+    gridsize = [32, 32, 32]
 
     data_folder = r"D:\9.programming\Plenoxels\data"
     object_folders = ['chair', 'drums', 'ficus', 'hotdog', 'lego', 'materials', 'mic', 'ship']
@@ -472,7 +583,7 @@ def main():
     print(f"{selected_points.shape=}\n{selected_points[0]=}")
     print(f"{meshgrid.shape=}\n{meshgrid[selected_points[0][0][0], selected_points[0][0][1], selected_points[0][0][2]]}\n")
     print(f"{grid_grid.shape=}\n{grid_grid[selected_points[0][0][0], selected_points[0][0][1], selected_points[0][0][2]]}\n")
-    trilinear_interpolation(normalized_samples_for_indecies, grid_cells)
+    trilinear_interpolation(normalized_samples_for_indecies, selected_points, meshgrid)
 
     print(time.time() - t0)
 
@@ -495,7 +606,7 @@ def main():
     # choose samples along a ray
     temp2 = samples_interval[index * num_samples * number_of_rays: index * num_samples * number_of_rays + num_samples * number_of_rays]
 
-    visualize_rays_3d(ray_directions, [], temp, temp2)
+    # visualize_rays_3d_plotly(ray_directions, [], temp, temp2)
 
 
 if __name__ == "__main__":

@@ -244,7 +244,7 @@ def get_grid(sx, sy, sz, points_distance=0.5, info_size=3):
     grid_grid = torch.stack([coordsx, coordsy, coordsz], dim=-1)
     grid_coords = grid_grid.reshape(sx * sy * sz, 3)
 
-    grid_cells = torch.zeros_like(grid_grid)
+    grid_cells = torch.zeros([grid_grid.shape[0], grid_grid.shape[1], grid_grid.shape[2], 4])
 
     return grid_coords, grid_cells, meshgrid, grid_grid
 
@@ -461,16 +461,20 @@ def normalize_samples_for_indecies(grid_indices, samples_interval, points_distan
 def trilinear_interpolation(normalized_samples_for_indecies, selected_points, grid_cells):
 
     """
-
-    :param normalized_samples_for_indecies:
-    :param selected_points:
-    :param grid_cells:
-    :return:
-
     The input tensors:
-    :param    normalized_samples_for_indecies has a shape of (N, 3), which represents N 3D points.
-    :param    selected_points has a shape of (N, 8, 3), which represents 8 corner points for each of the N 3D points.
-    :param    grid_cells has a shape of (X, Y, Z, 3), which represents a 3D grid with XxYxZ cells, where each cell has a 3D value associated with it.
+        :param    normalized_samples_for_indecies has a shape of (N, 3), which represents N 3D points.
+        :param    selected_points has a shape of (N, 8, 3), which represents 8 corner points for each of the N 3D points.
+        :param    grid_cells has a shape of (X, Y, Z, 3), which represents a 3D grid with XxYxZ cells, where each cell has a 3D value associated with it.
+
+    selected_points is of this form:
+        [['ceil_x', 'ceil_y', 'ceil_z'],
+         ['ceil_x', 'ceil_y', 'floor_z'],
+         ['ceil_x', 'floor_y', 'ceil_z'],
+         ['ceil_x', 'floor_y', 'floor_z'],
+         ['floor_x', 'ceil_y', 'ceil_z'],
+         ['floor_x', 'ceil_y', 'floor_z'],
+         ['floor_x', 'floor_y', 'ceil_z'],
+         ['floor_x', 'floor_y', 'floor_z']]
 
     1. selection0 and selection1:
         These two tensors are created by reshaping the last 4 and first 4 corner points of each cell in selected_points, respectively.
@@ -493,13 +497,8 @@ def trilinear_interpolation(normalized_samples_for_indecies, selected_points, gr
 
     inteplation_frac = torch.frac(normalized_samples_for_indecies)
 
-    selection0 = selected_points[:, 4:, :].reshape(selected_points.shape[0]*4, selected_points.shape[-1])
-    selection0 = grid_cells[selection0[:, 0], selection0[:, 1], selection0[:, 2]].reshape(selected_points.shape[0], 4, selected_points.shape[-1])
-    # selection0 = grid_cells[selected_points[:, 4:, 0], selected_points[:, 4:, 1], selected_points[:, 4:, 2]]
-
-    selection1 = selected_points[:, :4, :].reshape(selected_points.shape[0]*4, selected_points.shape[-1])
-    selection1 = grid_cells[selection1[:, 0], selection1[:, 1], selection1[:, 2]].reshape(selected_points.shape[0], 4, selected_points.shape[-1])
-    # selection1 = grid_cells[selected_points[:, :4, 0], selected_points[:, :4, 1], selected_points[:, :4, 2]]
+    selection0 = grid_cells[selected_points[:, 4:, 0], selected_points[:, 4:, 1], selected_points[:, 4:, 2]]
+    selection1 = grid_cells[selected_points[:, :4, 0], selected_points[:, :4, 1], selected_points[:, :4, 2]]
 
     inteplation_frac_step1 = inteplation_frac[:, 0].unsqueeze(-1).unsqueeze(-1)
     newstep = (selection1 * inteplation_frac_step1) + (selection0 * (1 - inteplation_frac_step1))
@@ -509,17 +508,6 @@ def trilinear_interpolation(normalized_samples_for_indecies, selected_points, gr
 
     inteplation_frac_step3 = inteplation_frac[:, 2].unsqueeze(-1)
     newstep = (newstep[:, 0] * inteplation_frac_step3) + (newstep[:, 1] * (1 - inteplation_frac_step3))
-
-    """
-    [['ceil_x', 'ceil_y', 'ceil_z'],
-     ['ceil_x', 'ceil_y', 'floor_z'],
-     ['ceil_x', 'floor_y', 'ceil_z'],
-     ['ceil_x', 'floor_y', 'floor_z'],
-     ['floor_x', 'ceil_y', 'ceil_z'],
-     ['floor_x', 'ceil_y', 'floor_z'],
-     ['floor_x', 'floor_y', 'ceil_z'],
-     ['floor_x', 'floor_y', 'floor_z']]
-     """
 
     return newstep
 
@@ -545,13 +533,13 @@ def main():
     Returns:
     None
     """
-    number_of_rays = 4
-    num_samples = 10
+    number_of_rays = 9
+    num_samples = 200
     delta_step = 0.05
     even_spread = True
     camera_ray = False
-    points_distance = 0.02*2
-    gridsize = [32, 32, 32]
+    points_distance = 0.02*2*10
+    gridsize = [64, 64, 64]
 
     data_folder = r"D:\9.programming\Plenoxels\data"
     object_folders = ['chair', 'drums', 'ficus', 'hotdog', 'lego', 'materials', 'mic', 'ship']
@@ -583,7 +571,8 @@ def main():
     print(f"{selected_points.shape=}\n{selected_points[0]=}")
     print(f"{meshgrid.shape=}\n{meshgrid[selected_points[0][0][0], selected_points[0][0][1], selected_points[0][0][2]]}\n")
     print(f"{grid_grid.shape=}\n{grid_grid[selected_points[0][0][0], selected_points[0][0][1], selected_points[0][0][2]]}\n")
-    trilinear_interpolation(normalized_samples_for_indecies, selected_points, meshgrid)
+    result = trilinear_interpolation(normalized_samples_for_indecies, selected_points, grid_cells)
+    print(f"{result.shape=}")
 
     print(time.time() - t0)
 
@@ -606,7 +595,7 @@ def main():
     # choose samples along a ray
     temp2 = samples_interval[index * num_samples * number_of_rays: index * num_samples * number_of_rays + num_samples * number_of_rays]
 
-    # visualize_rays_3d_plotly(ray_directions, [], temp, temp2)
+    visualize_rays_3d_plotly(ray_directions, [], temp, temp2)
 
 
 if __name__ == "__main__":

@@ -31,11 +31,11 @@ def load_data(data):
     return transform_matricies, file_paths, camera_angle_x
 
 
-def sample_camera_rays_batched(data, imgs, number_of_rays, num_samples, delta_step, even_spread, camera_ray):
+def sample_camera_rays_batched(transform_matricies, camera_angle_x, imgs, number_of_rays, num_samples, delta_step, even_spread, camera_ray):
     if even_spread:
         number_of_rays = int(np.round(np.sqrt(number_of_rays)) ** 2)
 
-    transform_matricies, file_paths, camera_angle_x = load_data(data)
+    # transform_matricies, file_paths, camera_angle_x = load_data(data)
 
     if camera_ray:
         current_ray_directions = transform_matricies[:, :3, 2].unsqueeze(0) * -1
@@ -47,7 +47,7 @@ def sample_camera_rays_batched(data, imgs, number_of_rays, num_samples, delta_st
     ray_directions = current_ray_directions
     camera_positions = transform_matricies[:, :3, 3]
 
-    delta_forsamples = delta_step * torch.arange(num_samples + 1)[1:].repeat(number_of_rays * len(data["frames"])) \
+    delta_forsamples = delta_step * torch.arange(num_samples + 1)[1:].repeat(number_of_rays * imgs.shape[0]) \
         .unsqueeze(1)
 
     camera_positions_forsamples = torch.repeat_interleave(camera_positions, num_samples * number_of_rays, 0)
@@ -55,7 +55,7 @@ def sample_camera_rays_batched(data, imgs, number_of_rays, num_samples, delta_st
     ray_directions_for_samples = torch.repeat_interleave(ray_directions, num_samples, 0)
     samples_interval = camera_positions_forsamples + ray_directions_for_samples * delta_forsamples
 
-    return samples_interval, camera_positions, ray_directions
+    return samples_interval, pixels_to_rays, camera_positions, ray_directions
 
 
 def batched_cartesian_prod(A, B):
@@ -204,7 +204,10 @@ def get_grid_points_indices(normalized_samples_for_indecies):
     return relevant_points
 
 
-def collect_cell_information_via_indices(A, B):
+def collect_cell_information_via_indices(normalized_samples_for_indecies, B):
+    edge_matching_points = get_grid_points_indices(normalized_samples_for_indecies)
+    A = edge_matching_points.reshape([edge_matching_points.shape[0] * edge_matching_points.shape[1],
+                                                         edge_matching_points.shape[2]])
 
     X, Y, Z, N = B.shape
 
@@ -244,7 +247,7 @@ def get_grid(sx, sy, sz, points_distance=0.5, info_size=3):
     grid_grid = torch.stack([coordsx, coordsy, coordsz], dim=-1)
     grid_coords = grid_grid.reshape(sx * sy * sz, 3)
 
-    grid_cells = torch.zeros([grid_grid.shape[0], grid_grid.shape[1], grid_grid.shape[2], 4])
+    grid_cells = torch.zeros([grid_grid.shape[0], grid_grid.shape[1], grid_grid.shape[2], 4], requires_grad=True)
 
     return grid_coords, grid_cells, meshgrid, grid_grid
 
@@ -512,6 +515,32 @@ def trilinear_interpolation(normalized_samples_for_indecies, selected_points, gr
     return newstep
 
 
+def fit(transform_matricies, camera_angle_x, imgs, number_of_rays, num_samples, delta_step, even_spread,
+                 camera_ray, points_distance, gridsize):
+
+    samples_interval, pixels_to_rays, camera_positions, ray_directions = sample_camera_rays_batched(
+        transform_matricies=transform_matricies,
+        camera_angle_x=camera_angle_x,
+        imgs=imgs,
+        number_of_rays=number_of_rays,
+        num_samples=num_samples,
+        delta_step=delta_step,
+        even_spread=even_spread,
+        camera_ray=camera_ray
+    )
+
+    grid_indices, grid_cells, meshgrid, grid_grid = get_grid(gridsize[0], gridsize[1], gridsize[2],
+                                                             points_distance=points_distance, info_size=4)
+    normalized_samples_for_indecies = normalize_samples_for_indecies(grid_indices, samples_interval, points_distance)
+    selected_points = collect_cell_information_via_indices(normalized_samples_for_indecies, meshgrid)
+    interpolated_points = trilinear_interpolation(normalized_samples_for_indecies, selected_points, grid_cells)
+
+
+
+
+
+    return
+
 def main():
     """
     This function reads a dataset of 3D object transformations, generates camera rays, and visualizes
@@ -536,7 +565,7 @@ def main():
     number_of_rays = 9
     num_samples = 200
     delta_step = 0.05
-    even_spread = True
+    even_spread = False
     camera_ray = False
     points_distance = 0.02*2*10
     gridsize = [64, 64, 64]
@@ -549,9 +578,10 @@ def main():
     grid_indices, grid_cells, meshgrid, grid_grid = get_grid(gridsize[0], gridsize[1], gridsize[2],
                                                              points_distance=points_distance, info_size=4)
     t0 = time.time()
-
-    samples_interval, camera_positions, ray_directions = sample_camera_rays_batched(
-                                                                                    data=data,
+    transform_matricies, file_paths, camera_angle_x = load_data(data)
+    samples_interval, pixels_to_rays, camera_positions, ray_directions = sample_camera_rays_batched(
+                                                                                    transform_matricies=transform_matricies,
+                                                                                    camera_angle_x=camera_angle_x,
                                                                                     imgs=imgs,
                                                                                     number_of_rays=number_of_rays,
                                                                                     num_samples=num_samples,
@@ -559,20 +589,18 @@ def main():
                                                                                     even_spread=even_spread,
                                                                                     camera_ray=camera_ray
                                                                                     )
-
     normalized_samples_for_indecies = normalize_samples_for_indecies(grid_indices, samples_interval, points_distance)
-    edge_matching_points = get_grid_points_indices(normalized_samples_for_indecies)
-    edge_matching_points = edge_matching_points.reshape([edge_matching_points.shape[0] * edge_matching_points.shape[1],
-                                                         edge_matching_points.shape[2]])
-    selected_points = collect_cell_information_via_indices(edge_matching_points, meshgrid)
+    selected_points = collect_cell_information_via_indices(normalized_samples_for_indecies, meshgrid)
 
+    print(f"{samples_interval.shape=}\n{samples_interval[0]=}")
     print(f"{normalized_samples_for_indecies.shape=}\n{normalized_samples_for_indecies[0]=}")
-    print(f"{edge_matching_points.shape=}\n{edge_matching_points[0]=}")
     print(f"{selected_points.shape=}\n{selected_points[0]=}")
     print(f"{meshgrid.shape=}\n{meshgrid[selected_points[0][0][0], selected_points[0][0][1], selected_points[0][0][2]]}\n")
     print(f"{grid_grid.shape=}\n{grid_grid[selected_points[0][0][0], selected_points[0][0][1], selected_points[0][0][2]]}\n")
     result = trilinear_interpolation(normalized_samples_for_indecies, selected_points, grid_cells)
-    print(f"{result.shape=}")
+    print(f"{normalized_samples_for_indecies.requires_grad=}")
+    print(f"{selected_points.requires_grad=}")
+
 
     print(time.time() - t0)
 
@@ -589,7 +617,9 @@ def main():
     index = 23
 
     # choose grid points around samples along a ray
-    temp = selected_points[index * num_samples * number_of_rays: index * num_samples * number_of_rays + num_samples * number_of_rays].reshape([number_of_rays*num_samples*8, 3])
+    index0 = index * num_samples * number_of_rays
+    index1 = index * num_samples * number_of_rays + num_samples * number_of_rays
+    temp = selected_points[index0: index1].reshape([number_of_rays*num_samples*8, 3])
     temp = grid_grid[temp[:, 0], temp[:, 1], temp[:, 2]]
 
     # choose samples along a ray

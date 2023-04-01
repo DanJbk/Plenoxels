@@ -515,6 +515,15 @@ def trilinear_interpolation(normalized_samples_for_indecies, selected_points, gr
     return newstep
 
 
+def get_nearest_voxels(normalized_samples_for_indecies, grid):
+    indecies = torch.round(normalized_samples_for_indecies).to(torch.long)
+    X, Y, Z, N = grid.shape
+    idx1, idx2, idx3 = indecies[:, 0], indecies[:, 1], indecies[:, 2]
+    idx1 %= X
+    idx2 %= Y
+    idx3 %= Z
+    return grid[idx1, idx2, idx3]
+
 def fit(transform_matricies, camera_angle_x, imgs, number_of_rays, num_samples, delta_step, even_spread,
                  camera_ray, points_distance, gridsize):
 
@@ -535,11 +544,32 @@ def fit(transform_matricies, camera_angle_x, imgs, number_of_rays, num_samples, 
     selected_points = collect_cell_information_via_indices(normalized_samples_for_indecies, meshgrid)
     interpolated_points = trilinear_interpolation(normalized_samples_for_indecies, selected_points, grid_cells)
 
-
-
-
-
     return
+
+def voxel_visulization(index, grid_grid, num_samples, number_of_rays, selected_points_voxels, samples_interval,
+                       ray_directions):
+    index0 = index * num_samples * number_of_rays
+    index1 = index * num_samples * number_of_rays + num_samples * number_of_rays
+    temp = selected_points_voxels[index0: index1]
+    temp = grid_grid[temp[:, 0], temp[:, 1], temp[:, 2]]
+    # choose samples along a ray
+    temp2 = samples_interval[
+            index * num_samples * number_of_rays: index * num_samples * number_of_rays + num_samples * number_of_rays]
+    visualize_rays_3d_plotly(ray_directions, [], temp, temp2)
+
+
+def paper_visulization(index, grid_grid, num_samples, number_of_rays, selected_points, samples_interval,
+                       ray_directions):
+
+    index0 = index * num_samples * number_of_rays
+    index1 = index * num_samples * number_of_rays + num_samples * number_of_rays
+    temp = selected_points[index0: index1].reshape([number_of_rays * num_samples * 8, 3])
+    temp = grid_grid[temp[:, 0], temp[:, 1], temp[:, 2]]
+
+    # choose samples along a ray
+    temp2 = samples_interval[
+            index * num_samples * number_of_rays: index * num_samples * number_of_rays + num_samples * number_of_rays]
+    visualize_rays_3d_plotly(ray_directions, [], temp, temp2)
 
 def main():
     """
@@ -590,16 +620,12 @@ def main():
                                                                                     camera_ray=camera_ray
                                                                                     )
     normalized_samples_for_indecies = normalize_samples_for_indecies(grid_indices, samples_interval, points_distance)
-    selected_points = collect_cell_information_via_indices(normalized_samples_for_indecies, meshgrid)
+
 
     print(f"{samples_interval.shape=}\n{samples_interval[0]=}")
     print(f"{normalized_samples_for_indecies.shape=}\n{normalized_samples_for_indecies[0]=}")
-    print(f"{selected_points.shape=}\n{selected_points[0]=}")
-    print(f"{meshgrid.shape=}\n{meshgrid[selected_points[0][0][0], selected_points[0][0][1], selected_points[0][0][2]]}\n")
-    print(f"{grid_grid.shape=}\n{grid_grid[selected_points[0][0][0], selected_points[0][0][1], selected_points[0][0][2]]}\n")
-    result = trilinear_interpolation(normalized_samples_for_indecies, selected_points, grid_cells)
+
     print(f"{normalized_samples_for_indecies.requires_grad=}")
-    print(f"{selected_points.requires_grad=}")
 
 
     print(time.time() - t0)
@@ -615,17 +641,17 @@ def main():
 
     # -- visulize grid around sampled points of ray
     index = 23
+    # selected_points = collect_cell_information_via_indices(normalized_samples_for_indecies, meshgrid)
+    # paper_visulization(index, grid_grid, num_samples, number_of_rays, selected_points, samples_interval,
+    #                    ray_directions)
+    # result = trilinear_interpolation(normalized_samples_for_indecies, selected_points, grid_cells)
 
-    # choose grid points around samples along a ray
-    index0 = index * num_samples * number_of_rays
-    index1 = index * num_samples * number_of_rays + num_samples * number_of_rays
-    temp = selected_points[index0: index1].reshape([number_of_rays*num_samples*8, 3])
-    temp = grid_grid[temp[:, 0], temp[:, 1], temp[:, 2]]
 
-    # choose samples along a ray
-    temp2 = samples_interval[index * num_samples * number_of_rays: index * num_samples * number_of_rays + num_samples * number_of_rays]
 
-    visualize_rays_3d_plotly(ray_directions, [], temp, temp2)
+    # -- visulize points on grid closest to sampled points of ray
+    selected_points_voxels = get_nearest_voxels(normalized_samples_for_indecies, meshgrid)
+    voxel_visulization(index, grid_grid, num_samples, number_of_rays, selected_points_voxels, samples_interval,
+                       ray_directions)
 
 
 if __name__ == "__main__":

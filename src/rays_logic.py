@@ -154,7 +154,9 @@ def generate_rays_batched(imgs, number_of_rays, transform_matricies, camera_angl
     # Map pixel indices to camera indices
     camera_to_ray = torch.repeat_interleave(torch.arange(0, transform_matricies.shape[0]), number_of_rays, 0)
     pixel_indices = pixel_indices.reshape([pixel_indices.shape[0] * pixel_indices.shape[1], pixel_indices.shape[2]])
-    pixels_to_rays = imgs[camera_to_ray, pixel_indices[:, 0], pixel_indices[:, 1]]
+    # pixels_to_rays = imgs[camera_to_ray, pixel_indices[:, 0], pixel_indices[:, 1]]
+    # the y dimension is the first one, the x dimension is the second in an image
+    pixels_to_rays = imgs[camera_to_ray, pixel_indices[:, 1], pixel_indices[:, 0]]
 
     # Get the u and v values from ray_indices
     u_values, v_values = ray_indices[:, :, 0].unsqueeze(-1), ray_indices[:, :, 1].unsqueeze(-1)
@@ -337,7 +339,7 @@ def visualize_rays_3d(ray_directions, camera_positions, red=None, green=None, or
 
         # Plot 3D vectors
         for i in (range(ray_directions.shape[0])):
-            if (i-1)%25 == 0:
+            if (i-8) % 9 == 0:
 
                 ax.quiver(origin_x[i], origin_y[i], origin_z[i],
                           ray_directions[i, 0], ray_directions[i, 1], ray_directions[i, 2],
@@ -593,12 +595,12 @@ def main():
     None
     """
     number_of_rays = 9
-    num_samples = 200
+    num_samples = 9#200
     delta_step = 0.05
-    even_spread = False
+    even_spread = True
     camera_ray = False
-    points_distance = 0.02*2*10
-    gridsize = [64, 64, 64]
+    points_distance = 0.02#*2*10
+    gridsize = [3, 3, 3]#64
 
     data_folder = r"D:\9.programming\Plenoxels\data"
     object_folders = ['chair', 'drums', 'ficus', 'hotdog', 'lego', 'materials', 'mic', 'ship']
@@ -636,11 +638,11 @@ def main():
     # -- visulize camera rays and samples along rays
     ray_positions = torch.repeat_interleave(camera_positions, number_of_rays, 0)
     sampled_rays = samples_interval[num_samples*number_of_rays*10:num_samples*(number_of_rays*10 + number_of_rays)]
-    # visualize_rays_3d(ray_directions, ray_positions, sampled_rays, grid_indices)
+    visualize_rays_3d(ray_directions, ray_positions, sampled_rays, grid_indices)
     # visualize_rays_3d(ray_directions, ray_positions, sampled_rays)
 
     # -- visulize grid around sampled points of ray
-    index = 23
+    # index = 23
     # selected_points = collect_cell_information_via_indices(normalized_samples_for_indecies, meshgrid)
     # paper_visulization(index, grid_grid, num_samples, number_of_rays, selected_points, samples_interval,
     #                    ray_directions)
@@ -649,9 +651,9 @@ def main():
 
 
     # -- visulize points on grid closest to sampled points of ray
-    selected_points_voxels = get_nearest_voxels(normalized_samples_for_indecies, meshgrid)
-    voxel_visulization(index, grid_grid, num_samples, number_of_rays, selected_points_voxels, samples_interval,
-                       ray_directions)
+    # selected_points_voxels = get_nearest_voxels(normalized_samples_for_indecies, meshgrid)
+    # voxel_visulization(index, grid_grid, num_samples, number_of_rays, selected_points_voxels, samples_interval,
+    #                    ray_directions)
 
 
 if __name__ == "__main__":

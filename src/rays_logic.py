@@ -587,6 +587,7 @@ def compute_alpha_weighted_pixels(samples):
 
     :param samples: a tensor of size [Number of cameras, number of rays, number of samples along the rays]
     :return: a tensor of size [Number of cameras, number of rays,]
+    compute the color of a pixel given the alphas of the grid
     """
 
     # compute sample weight using the alpha channels;

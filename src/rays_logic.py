@@ -405,7 +405,7 @@ def visualize_rays_3d_plotly(ray_directions, camera_positions, red=None, green=N
                                  aspectmode='cube',
                                  xaxis=dict(range=[-5, 5]),
                                  yaxis=dict(range=[-5, 5]),
-                                 zaxis=dict(range=[0, 10])),
+                                 zaxis=dict(range=[-2, 10])),
                      title="3D Visualization of Evenly Spread Ray Directions within Camera's FOV",
                      autosize=False, width=800, height=800)
     pio.write_html(fig, file='visualize_rays_3d.html', auto_open=True)
@@ -457,7 +457,7 @@ def load_image_data(data_folder, object_folder):
     imgs = [Image.open(f'{data_folder}/{object_folder}/train/{frame["file_path"].split("/")[-1]}.png') for frame in data["frames"]]
     imgs = np.array([np.array(img) for img in imgs])
     imgs = torch.tensor(imgs, dtype=torch.float)
-    imgs = (imgs - 128) / 255
+    imgs = (imgs / 255)
 
     return data, imgs
 
@@ -581,39 +581,74 @@ def paper_visulization(index, grid_grid, num_samples, number_of_rays, selected_p
             index * num_samples * number_of_rays: index * num_samples * number_of_rays + num_samples * number_of_rays]
     visualize_rays_3d_plotly(ray_directions, [], temp, temp2)
 
-def inference_voxels():
 
-    return
+def compute_alpha_weighted_pixels(samples):
+    """
+
+    :param samples: a tensor of size [Number of cameras, number of rays, number of samples along the rays]
+    :return: a tensor of size [Number of cameras, number of rays,]
+    """
+
+    # compute sample weight using the alpha channels;
+    alpha = samples[..., -1]
+    padded_nearest_alpha = torch.cat([torch.zeros_like(alpha[..., :1]), alpha], dim=2)
+    cumprod = (1 - padded_nearest_alpha[..., :-1]).cumprod(dim=2)
+    weights = (alpha * cumprod).unsqueeze(-1)
+
+    # multiply the weights by the color channels and sum, do the same to get the final alphas
+    samples = (samples[..., :-1] * weights).sum(2)
+    final_alpha = weights.sum(dim=2)
+
+    # Combine the pixel colors and final alpha values
+    res = torch.cat([samples, final_alpha], dim=2)
+    print(f"{res.shape=}")
+    return res
+
 
 def inference_test_voxels():
+
+    # parameters
     number_of_rays = 40000
-    num_samples = 800  # 200
+    num_samples = 600
     delta_step = .01
     even_spread = True
     camera_ray = False
     points_distance = 0.5  # *2*10
     gridsize = [5, 5, 5]  # 64
 
+    # loading data
     data_folder = r"D:\9.programming\Plenoxels\data"
     object_folders = ['chair', 'drums', 'ficus', 'hotdog', 'lego', 'materials', 'mic', 'ship']
     object_folder = object_folders[0]
     data, imgs = load_image_data(data_folder, object_folder)
+    transform_matricies, file_paths, camera_angle_x = load_data(data)
 
+    # generate grid
     grid_indices, grid_cells, meshgrid, grid_grid = get_grid(gridsize[0], gridsize[1], gridsize[2],
                                                              points_distance=points_distance, info_size=4)
-    transform_matricies, file_paths, camera_angle_x = load_data(data)
-    with torch.no_grad():
-        grid_cells[2, 2, 0] += 0 #0.498
-        grid_cells[2, 2, 1, 0] += 0.498
-        grid_cells[3, 2, 0, 1:3] += 0.498
-        grid_cells[2, 3, 0, 1] += 0.498
-        grid_cells[1, 2, 0, 2] += 0.498
-        grid_cells[2, 1, 0, :2] += 0.498
 
-    img_index = 2
+    # draw voxels to create an image
+    with torch.no_grad():
+        grid_cells[2, 2, 0, 0] += 0 #0.498
+        grid_cells[2, 2, 1, 0] += 0.5
+        grid_cells[3, 2, 0, 1:3] += 0.5
+        grid_cells[2, 3, 0, 1] += 0.5
+        grid_cells[1, 2, 0, 2] += 0.5
+        grid_cells[2, 1, 0, :2] += 0.5
+
+        grid_cells[2, 2, 0, -1] = 1
+        grid_cells[2, 2, 1, -1] = 0.015
+        grid_cells[3, 2, 0, -1] = 0.05
+        grid_cells[2, 3, 0, -1] = 0.015
+        grid_cells[1, 2, 0, -1] = 1
+        grid_cells[2, 1, 0, -1] = 1
+
+    # choose an image to process
+    img_index = 1
     imgs = imgs[img_index, :, :, :].unsqueeze(0)
     transform_matricies = transform_matricies[img_index, :, :].unsqueeze(0)
 
+    # generate samples
     samples_interval, pixels_to_rays, camera_positions, ray_directions = sample_camera_rays_batched(
         transform_matricies=transform_matricies,
         camera_angle_x=camera_angle_x,
@@ -624,26 +659,25 @@ def inference_test_voxels():
         even_spread=even_spread,
         camera_ray=camera_ray
     )
+
+    # compute closest grid points to samples
     normalized_samples_for_indecies = normalize_samples_for_indecies(grid_indices, samples_interval, points_distance)
     nearest, mask = get_nearest_voxels(normalized_samples_for_indecies, grid_cells)
+    nearest = nearest * mask.unsqueeze(-1)  # zero the samples landing outside the grid
+
+    # find pixels color
     nearest = nearest.reshape(1, number_of_rays, num_samples, 4)
-    mask = mask.reshape(1, number_of_rays, num_samples, 1)
+    pixels_color = compute_alpha_weighted_pixels(nearest)
 
-    # todo right now we are summing all the points along the ray equaly, we need to give priority to the first points
-    nearest = nearest * mask
-    nearest = nearest.sum(2)
-
-    # -- sanity test --
-    image = nearest.reshape(200, 200, 4)
-    image = ((image * 255) + 128).detach().numpy().round().clip(0, 255).astype(np.uint8)
+    # -- reshape and normalize an image and show --
+    pixels_color = pixels_color.detach().numpy()
+    pixels_color = (pixels_color * 255).round().clip(0, 255).astype(np.uint8)
+    image = pixels_color.reshape(200, 200, 4)
     image = np.transpose(image, (1, 0, 2))
-    # plt.imshow(image)
-    # plt.show()
 
-
-    # -- sanity test --
+    # -- sanity test for image --
     # image = pixels_to_rays.reshape(200, 200, 4).numpy()
-    # image = ((image * 255) + 128).astype(np.uint8)
+    # image = (image * 255).astype(np.uint8)
     # image = np.transpose(image, (1, 0, 2))
 
     plt.imshow(image)
@@ -652,15 +686,7 @@ def inference_test_voxels():
     return
 
 
-
-
-
-
 def main():
-
-    inference_test_voxels()
-    return
-
     """
     This function reads a dataset of 3D object transformations, generates camera rays, and visualizes
     the rays in 3D space. The dataset contains information about frames, and the function processes
@@ -690,8 +716,8 @@ def main():
     # gridsize = [16, 16, 16]#64
 
     number_of_rays = 9
-    num_samples = 36  # 200
-    delta_step = .2
+    num_samples = 60  # 200
+    delta_step = .1
     even_spread = True
     camera_ray = False
     points_distance = 0.5  # *2*10
@@ -736,7 +762,7 @@ def main():
     # visualize_rays_3d(ray_directions, ray_positions, sampled_rays)
 
     # -- visulize grid around sampled points of ray
-    index = 2
+    index = 5
     # selected_points = collect_cell_information_via_indices(normalized_samples_for_indecies, meshgrid)
     # paper_visulization(index, grid_grid, num_samples, number_of_rays, selected_points, samples_interval,
     #                    ray_directions)
@@ -753,5 +779,6 @@ def main():
 
 if __name__ == "__main__":
     printi("start")
-    main()
+    # main()
+    inference_test_voxels()
     printi("end")

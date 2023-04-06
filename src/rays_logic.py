@@ -143,6 +143,7 @@ def generate_rays_batched(imgs, number_of_rays, transform_matricies, camera_angl
 
     # normalize to image space
     pixel_indices = ray_indices.clone()
+    # print(f"{ray_indices.shape=}\n{ray_indices}\n{ray_indices.reshape(3,3,2)}")
     pixel_indices[:, :, 0] = (pixel_indices[:, :, 0]/camera_angle_x) + 0.5
     pixel_indices[:, :, 1] = -(pixel_indices[:, :, 1]/((camera_angle_x * (1 / aspect_ratio)).unsqueeze(1))) + 0.5
 
@@ -228,7 +229,7 @@ def collect_cell_information_via_indices(normalized_samples_for_indecies, B):
     return output
 
 
-def get_grid(sx, sy, sz, points_distance=0.5, info_size=3):
+def get_grid(sx, sy, sz, points_distance=0.5, info_size=4):
 
 
     grindx_indices, grindy_indices, grindz_indices = torch.arange(sx), torch.arange(sy), torch.arange(sz)
@@ -249,7 +250,7 @@ def get_grid(sx, sy, sz, points_distance=0.5, info_size=3):
     grid_grid = torch.stack([coordsx, coordsy, coordsz], dim=-1)
     grid_coords = grid_grid.reshape(sx * sy * sz, 3)
 
-    grid_cells = torch.zeros([grid_grid.shape[0], grid_grid.shape[1], grid_grid.shape[2], 4], requires_grad=True)
+    grid_cells = torch.zeros([grid_grid.shape[0], grid_grid.shape[1], grid_grid.shape[2], info_size], requires_grad=True)
 
     return grid_coords, grid_cells, meshgrid, grid_grid
 
@@ -456,7 +457,7 @@ def load_image_data(data_folder, object_folder):
     imgs = [Image.open(f'{data_folder}/{object_folder}/train/{frame["file_path"].split("/")[-1]}.png') for frame in data["frames"]]
     imgs = np.array([np.array(img) for img in imgs])
     imgs = torch.tensor(imgs, dtype=torch.float)
-    imgs = (imgs - imgs.mean()) / 255
+    imgs = (imgs - 128) / 255
 
     return data, imgs
 
@@ -521,10 +522,17 @@ def get_nearest_voxels(normalized_samples_for_indecies, grid):
     indecies = torch.round(normalized_samples_for_indecies).to(torch.long)
     X, Y, Z, N = grid.shape
     idx1, idx2, idx3 = indecies[:, 0], indecies[:, 1], indecies[:, 2]
+
+    # find which points are outside the grid
+    idx1_outofbounds = (idx1 < X) & (idx1 >= 0)
+    idx2_outofbounds = (idx2 < Y) & (idx2 >= 0)
+    idx3_outofbounds = (idx3 < Z) & (idx3 >= 0)
+    outofbounds = idx1_outofbounds & idx2_outofbounds & idx3_outofbounds
+
     idx1 %= X
     idx2 %= Y
     idx3 %= Z
-    return grid[idx1, idx2, idx3]
+    return grid[idx1, idx2, idx3], outofbounds
 
 def fit(transform_matricies, camera_angle_x, imgs, number_of_rays, num_samples, delta_step, even_spread,
                  camera_ray, points_distance, gridsize):
@@ -573,7 +581,86 @@ def paper_visulization(index, grid_grid, num_samples, number_of_rays, selected_p
             index * num_samples * number_of_rays: index * num_samples * number_of_rays + num_samples * number_of_rays]
     visualize_rays_3d_plotly(ray_directions, [], temp, temp2)
 
+def inference_voxels():
+
+    return
+
+def inference_test_voxels():
+    number_of_rays = 40000
+    num_samples = 800  # 200
+    delta_step = .01
+    even_spread = True
+    camera_ray = False
+    points_distance = 0.5  # *2*10
+    gridsize = [5, 5, 5]  # 64
+
+    data_folder = r"D:\9.programming\Plenoxels\data"
+    object_folders = ['chair', 'drums', 'ficus', 'hotdog', 'lego', 'materials', 'mic', 'ship']
+    object_folder = object_folders[0]
+    data, imgs = load_image_data(data_folder, object_folder)
+
+    grid_indices, grid_cells, meshgrid, grid_grid = get_grid(gridsize[0], gridsize[1], gridsize[2],
+                                                             points_distance=points_distance, info_size=4)
+    transform_matricies, file_paths, camera_angle_x = load_data(data)
+    with torch.no_grad():
+        grid_cells[2, 2, 0] += 0 #0.498
+        grid_cells[2, 2, 1, 0] += 0.498
+        grid_cells[3, 2, 0, 1:3] += 0.498
+        grid_cells[2, 3, 0, 1] += 0.498
+        grid_cells[1, 2, 0, 2] += 0.498
+        grid_cells[2, 1, 0, :2] += 0.498
+
+    img_index = 2
+    imgs = imgs[img_index, :, :, :].unsqueeze(0)
+    transform_matricies = transform_matricies[img_index, :, :].unsqueeze(0)
+
+    samples_interval, pixels_to_rays, camera_positions, ray_directions = sample_camera_rays_batched(
+        transform_matricies=transform_matricies,
+        camera_angle_x=camera_angle_x,
+        imgs=imgs,
+        number_of_rays=number_of_rays,
+        num_samples=num_samples,
+        delta_step=delta_step,
+        even_spread=even_spread,
+        camera_ray=camera_ray
+    )
+    normalized_samples_for_indecies = normalize_samples_for_indecies(grid_indices, samples_interval, points_distance)
+    nearest, mask = get_nearest_voxels(normalized_samples_for_indecies, grid_cells)
+    nearest = nearest.reshape(1, number_of_rays, num_samples, 4)
+    mask = mask.reshape(1, number_of_rays, num_samples, 1)
+
+    # todo right now we are summing all the points along the ray equaly, we need to give priority to the first points
+    nearest = nearest * mask
+    nearest = nearest.sum(2)
+
+    # -- sanity test --
+    image = nearest.reshape(200, 200, 4)
+    image = ((image * 255) + 128).detach().numpy().round().clip(0, 255).astype(np.uint8)
+    image = np.transpose(image, (1, 0, 2))
+    # plt.imshow(image)
+    # plt.show()
+
+
+    # -- sanity test --
+    # image = pixels_to_rays.reshape(200, 200, 4).numpy()
+    # image = ((image * 255) + 128).astype(np.uint8)
+    # image = np.transpose(image, (1, 0, 2))
+
+    plt.imshow(image)
+    plt.show()
+
+    return
+
+
+
+
+
+
 def main():
+
+    inference_test_voxels()
+    return
+
     """
     This function reads a dataset of 3D object transformations, generates camera rays, and visualizes
     the rays in 3D space. The dataset contains information about frames, and the function processes
@@ -594,13 +681,21 @@ def main():
     Returns:
     None
     """
+    # number_of_rays = 16
+    # num_samples = 9#200
+    # delta_step = 0.5
+    # even_spread = True
+    # camera_ray = False
+    # points_distance = 0.5#*2*10
+    # gridsize = [16, 16, 16]#64
+
     number_of_rays = 9
-    num_samples = 9#200
-    delta_step = 0.05
+    num_samples = 36  # 200
+    delta_step = .2
     even_spread = True
     camera_ray = False
-    points_distance = 0.02#*2*10
-    gridsize = [3, 3, 3]#64
+    points_distance = 0.5  # *2*10
+    gridsize = [5, 5, 5]  # 64
 
     data_folder = r"D:\9.programming\Plenoxels\data"
     object_folders = ['chair', 'drums', 'ficus', 'hotdog', 'lego', 'materials', 'mic', 'ship']
@@ -626,7 +721,6 @@ def main():
 
     print(f"{samples_interval.shape=}\n{samples_interval[0]=}")
     print(f"{normalized_samples_for_indecies.shape=}\n{normalized_samples_for_indecies[0]=}")
-
     print(f"{normalized_samples_for_indecies.requires_grad=}")
 
 
@@ -636,13 +730,13 @@ def main():
     # visualize_rays_3d(ray_directions, [], grid_indices)
 
     # -- visulize camera rays and samples along rays
-    ray_positions = torch.repeat_interleave(camera_positions, number_of_rays, 0)
-    sampled_rays = samples_interval[num_samples*number_of_rays*10:num_samples*(number_of_rays*10 + number_of_rays)]
-    visualize_rays_3d(ray_directions, ray_positions, sampled_rays, grid_indices)
+    # ray_positions = torch.repeat_interleave(camera_positions, number_of_rays, 0)
+    # sampled_rays = samples_interval[num_samples*number_of_rays*10:num_samples*(number_of_rays*10 + number_of_rays)]
+    # visualize_rays_3d(ray_directions, ray_positions, sampled_rays, grid_indices)
     # visualize_rays_3d(ray_directions, ray_positions, sampled_rays)
 
     # -- visulize grid around sampled points of ray
-    # index = 23
+    index = 2
     # selected_points = collect_cell_information_via_indices(normalized_samples_for_indecies, meshgrid)
     # paper_visulization(index, grid_grid, num_samples, number_of_rays, selected_points, samples_interval,
     #                    ray_directions)
@@ -651,10 +745,11 @@ def main():
 
 
     # -- visulize points on grid closest to sampled points of ray
-    # selected_points_voxels = get_nearest_voxels(normalized_samples_for_indecies, meshgrid)
-    # voxel_visulization(index, grid_grid, num_samples, number_of_rays, selected_points_voxels, samples_interval,
-    #                    ray_directions)
+    selected_points_voxels, outofbound_mask = get_nearest_voxels(normalized_samples_for_indecies, meshgrid)
+    voxel_visulization(index, grid_grid, num_samples, number_of_rays, selected_points_voxels, samples_interval,
+                       ray_directions)
 
+    # print(f"{outofbound_mask.shape=}\n{outofbound_mask.unique(return_counts =True)}")
 
 if __name__ == "__main__":
     printi("start")

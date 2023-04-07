@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 from logging import info as printi
 from PIL import Image
 
-import numpy as np
 import plotly.graph_objs as go
 import plotly.io as pio
 import matplotlib.colors as mcolors
@@ -31,18 +30,21 @@ def load_data(data):
     return transform_matricies, file_paths, camera_angle_x
 
 
-def sample_camera_rays_batched(transform_matricies, camera_angle_x, imgs, number_of_rays, num_samples, delta_step, even_spread, camera_ray):
+def sample_camera_rays_batched(transform_matricies, camera_angle_x, imgs, number_of_rays, num_samples, delta_step,
+                               even_spread, camera_ray):
     if even_spread:
         number_of_rays = int(np.round(np.sqrt(number_of_rays)) ** 2)
 
     # transform_matricies, file_paths, camera_angle_x = load_data(data)
 
+    pixels_to_rays = []
     if camera_ray:
         current_ray_directions = transform_matricies[:, :3, 2].unsqueeze(0) * -1
 
     else:
-        current_ray_directions, pixels_to_rays = generate_rays_batched(imgs, number_of_rays, transform_matricies, camera_angle_x,
-                                                       even_spread=even_spread)
+        current_ray_directions, pixels_to_rays = generate_rays_batched(imgs, number_of_rays, transform_matricies,
+                                                                       camera_angle_x,
+                                                                       even_spread=even_spread)
 
     ray_directions = current_ray_directions
     camera_positions = transform_matricies[:, :3, 3]
@@ -95,6 +97,7 @@ def tensor_linspace(start, end, steps=10):
     out = start_w * start + end_w * end
     return out
 
+
 def generate_rays_batched(imgs, number_of_rays, transform_matricies, camera_angle_x, even_spread=False):
     """
         Generates rays for each camera and corresponding pixel indices.
@@ -110,7 +113,6 @@ def generate_rays_batched(imgs, number_of_rays, transform_matricies, camera_angl
             torch.Tensor: Generated ray directions (B * number_of_rays, 3).
             torch.Tensor: Pixel colors corresponding to the generated rays.
         """
-
 
     num_cameras = transform_matricies.shape[0]
 
@@ -144,12 +146,12 @@ def generate_rays_batched(imgs, number_of_rays, transform_matricies, camera_angl
     # normalize to image space
     pixel_indices = ray_indices.clone()
     # print(f"{ray_indices.shape=}\n{ray_indices}\n{ray_indices.reshape(3,3,2)}")
-    pixel_indices[:, :, 0] = (pixel_indices[:, :, 0]/camera_angle_x) + 0.5
-    pixel_indices[:, :, 1] = -(pixel_indices[:, :, 1]/((camera_angle_x * (1 / aspect_ratio)).unsqueeze(1))) + 0.5
+    pixel_indices[:, :, 0] = (pixel_indices[:, :, 0] / camera_angle_x) + 0.5
+    pixel_indices[:, :, 1] = -(pixel_indices[:, :, 1] / ((camera_angle_x * (1 / aspect_ratio)).unsqueeze(1))) + 0.5
 
     # Clamp pixel indices to image dimensions
-    pixel_indices[:, :, 0] = (imgs.shape[1]*pixel_indices[:, :, 0]).round().clamp(max=imgs.shape[1] - 1)
-    pixel_indices[:, :, 1] = (imgs.shape[2]*pixel_indices[:, :, 1]).round().clamp(max=imgs.shape[2] - 1)
+    pixel_indices[:, :, 0] = (imgs.shape[1] * pixel_indices[:, :, 0]).round().clamp(max=imgs.shape[1] - 1)
+    pixel_indices[:, :, 1] = (imgs.shape[2] * pixel_indices[:, :, 1]).round().clamp(max=imgs.shape[2] - 1)
     pixel_indices = pixel_indices.to(torch.long)
 
     # Map pixel indices to camera indices
@@ -175,6 +177,7 @@ def generate_rays_batched(imgs, number_of_rays, transform_matricies, camera_angl
 
     return ray_directions.reshape(ray_directions.shape[0] * number_of_rays, -1), pixels_to_rays
 
+
 def get_grid_points_indices(normalized_samples_for_indecies):
     """
     Given grid indices, a samples interval, and a points distance, this function calculates the indices of
@@ -182,7 +185,7 @@ def get_grid_points_indices(normalized_samples_for_indecies):
     that encloses each input point.
 
     Args:
-            normalized_samples_for_indecie
+            :param normalized_samples_for_indecies:
     Returns:
         torch.Tensor: A tensor of shape (N, 8, 3) containing the indices of the 8 corners of the grid cell
                       that encloses each input point.
@@ -210,7 +213,7 @@ def get_grid_points_indices(normalized_samples_for_indecies):
 def collect_cell_information_via_indices(normalized_samples_for_indecies, B):
     edge_matching_points = get_grid_points_indices(normalized_samples_for_indecies)
     A = edge_matching_points.reshape([edge_matching_points.shape[0] * edge_matching_points.shape[1],
-                                                         edge_matching_points.shape[2]])
+                                      edge_matching_points.shape[2]])
 
     X, Y, Z, N = B.shape
 
@@ -230,10 +233,8 @@ def collect_cell_information_via_indices(normalized_samples_for_indecies, B):
 
 
 def get_grid(sx, sy, sz, points_distance=0.5, info_size=4):
-
-
     grindx_indices, grindy_indices, grindz_indices = torch.arange(sx), torch.arange(sy), torch.arange(sz)
-    coordsx, coordsy, coordsz  = torch.meshgrid(grindx_indices, grindy_indices, grindz_indices,  indexing='ij')
+    coordsx, coordsy, coordsz = torch.meshgrid(grindx_indices, grindy_indices, grindz_indices, indexing='ij')
 
     meshgrid = torch.stack([coordsx, coordsy, coordsz], dim=-1)
 
@@ -250,7 +251,8 @@ def get_grid(sx, sy, sz, points_distance=0.5, info_size=4):
     grid_grid = torch.stack([coordsx, coordsy, coordsz], dim=-1)
     grid_coords = grid_grid.reshape(sx * sy * sz, 3)
 
-    grid_cells = torch.zeros([grid_grid.shape[0], grid_grid.shape[1], grid_grid.shape[2], info_size], requires_grad=True)
+    grid_cells = torch.zeros([grid_grid.shape[0], grid_grid.shape[1], grid_grid.shape[2], info_size],
+                             requires_grad=True)
 
     return grid_coords, grid_cells, meshgrid, grid_grid
 
@@ -340,7 +342,7 @@ def visualize_rays_3d(ray_directions, camera_positions, red=None, green=None, or
 
         # Plot 3D vectors
         for i in (range(ray_directions.shape[0])):
-            if (i-8) % 9 == 0:
+            if (i - 8) % 9 == 0:
 
                 ax.quiver(origin_x[i], origin_y[i], origin_z[i],
                           ray_directions[i, 0], ray_directions[i, 1], ray_directions[i, 2],
@@ -357,10 +359,9 @@ def visualize_rays_3d(ray_directions, camera_positions, red=None, green=None, or
             scatter_z = item[:, 2]
             ax.scatter(scatter_x, scatter_y, scatter_z, c=color, marker='o')
 
-    # todo base limits on grid and/or samples
     ax.set_xlim3d(-5, 5)
     ax.set_ylim3d(-5, 5)
-    ax.set_zlim3d(0, 5 * 2)
+    ax.set_zlim3d(-2, 5 * 2)
 
     ax.set_xlabel('X')
     ax.set_ylabel('Y')
@@ -378,7 +379,7 @@ def visualize_rays_3d_plotly(ray_directions, camera_positions, red=None, green=N
         origin_z = camera_positions[:, 2]
 
         for i in range(ray_directions.shape[0]):
-            color = 'blue' if (i-1) % 25 != 0 else 'red'
+            color = 'blue' if (i - 1) % 25 != 0 else 'red'
             alpha = 0.5
 
             x = np.array([origin_x[i], origin_x[i] + ray_directions[i, 0]])
@@ -387,7 +388,8 @@ def visualize_rays_3d_plotly(ray_directions, camera_positions, red=None, green=N
 
             fig.add_trace(go.Scatter3d(x=x, y=y, z=z,
                                        marker=dict(size=0),
-                                       line=dict(color=f'rgba({",".join(map(str, mcolors.to_rgba(color)[:3]))}, {alpha})'),
+                                       line=dict(
+                                           color=f'rgba({",".join(map(str, mcolors.to_rgba(color)[:3]))}, {alpha})'),
                                        showlegend=False))
 
     for item, color in zip([red, green, orange], ['red', 'green', 'orange']):
@@ -406,8 +408,8 @@ def visualize_rays_3d_plotly(ray_directions, camera_positions, red=None, green=N
                                  xaxis=dict(range=[-5, 5]),
                                  yaxis=dict(range=[-5, 5]),
                                  zaxis=dict(range=[-2, 10])),
-                     title="3D Visualization of Evenly Spread Ray Directions within Camera's FOV",
-                     autosize=False, width=800, height=800)
+                      title="3D Visualization of Evenly Spread Ray Directions within Camera's FOV",
+                      autosize=False, width=800, height=800)
     pio.write_html(fig, file='visualize_rays_3d.html', auto_open=True)
 
     # fig.show()
@@ -451,21 +453,24 @@ def sample_camera_rays(data, number_of_rays, num_samples, delta_step, even_sprea
 
     return samples_interval, camera_positions, ray_directions
 
+
 def load_image_data(data_folder, object_folder):
     with open(f"{data_folder}/{object_folder}/transforms_train.json", "r") as f:
         data = json.load(f)
-    imgs = [Image.open(f'{data_folder}/{object_folder}/train/{frame["file_path"].split("/")[-1]}.png') for frame in data["frames"]]
+    imgs = [Image.open(f'{data_folder}/{object_folder}/train/{frame["file_path"].split("/")[-1]}.png') for frame in
+            data["frames"]]
     imgs = np.array([np.array(img) for img in imgs])
     imgs = torch.tensor(imgs, dtype=torch.float)
     imgs = (imgs / 255)
 
     return data, imgs
 
+
 def normalize_samples_for_indecies(grid_indices, samples_interval, points_distance):
-    return ((samples_interval - grid_indices.min(0)[0]) / points_distance)
+    return (samples_interval - grid_indices.min(0)[0]) / points_distance
+
 
 def trilinear_interpolation(normalized_samples_for_indecies, selected_points, grid_cells):
-
     """
     The input tensors:
         :param    normalized_samples_for_indecies has a shape of (N, 3), which represents N 3D points.
@@ -534,9 +539,9 @@ def get_nearest_voxels(normalized_samples_for_indecies, grid):
     idx3 %= Z
     return grid[idx1, idx2, idx3], outofbounds
 
-def fit(transform_matricies, camera_angle_x, imgs, number_of_rays, num_samples, delta_step, even_spread,
-                 camera_ray, points_distance, gridsize):
 
+def fit(transform_matricies, camera_angle_x, imgs, number_of_rays, num_samples, delta_step, even_spread,
+        camera_ray, points_distance, gridsize):
     samples_interval, pixels_to_rays, camera_positions, ray_directions = sample_camera_rays_batched(
         transform_matricies=transform_matricies,
         camera_angle_x=camera_angle_x,
@@ -556,6 +561,7 @@ def fit(transform_matricies, camera_angle_x, imgs, number_of_rays, num_samples, 
 
     return
 
+
 def voxel_visulization(index, grid_grid, num_samples, number_of_rays, selected_points_voxels, samples_interval,
                        ray_directions):
     index0 = index * num_samples * number_of_rays
@@ -570,7 +576,6 @@ def voxel_visulization(index, grid_grid, num_samples, number_of_rays, selected_p
 
 def paper_visulization(index, grid_grid, num_samples, number_of_rays, selected_points, samples_interval,
                        ray_directions):
-
     index0 = index * num_samples * number_of_rays
     index1 = index * num_samples * number_of_rays + num_samples * number_of_rays
     temp = selected_points[index0: index1].reshape([number_of_rays * num_samples * 8, 3])
@@ -602,16 +607,14 @@ def compute_alpha_weighted_pixels(samples):
 
     # Combine the pixel colors and final alpha values
     res = torch.cat([samples, final_alpha], dim=2)
-    print(f"{res.shape=}")
     return res
 
 
 def inference_test_voxels():
-
     # parameters
     number_of_rays = 40000
     num_samples = 600
-    delta_step = .01
+    delta_step = 0.5
     even_spread = True
     camera_ray = False
     points_distance = 0.5  # *2*10
@@ -620,7 +623,7 @@ def inference_test_voxels():
     # loading data
     data_folder = r"D:\9.programming\Plenoxels\data"
     object_folders = ['chair', 'drums', 'ficus', 'hotdog', 'lego', 'materials', 'mic', 'ship']
-    object_folder = object_folders[0]
+    object_folder = object_folders[1]
     data, imgs = load_image_data(data_folder, object_folder)
     transform_matricies, file_paths, camera_angle_x = load_data(data)
 
@@ -630,7 +633,7 @@ def inference_test_voxels():
 
     # draw voxels to create an image
     with torch.no_grad():
-        grid_cells[2, 2, 0, 0] += 0 #0.498
+        grid_cells[2, 2, 0, 0] += 0  # 0.498
         grid_cells[2, 2, 1, 0] += 0.5
         grid_cells[3, 2, 0, 1:3] += 0.5
         grid_cells[2, 3, 0, 1] += 0.5
@@ -638,14 +641,14 @@ def inference_test_voxels():
         grid_cells[2, 1, 0, :2] += 0.5
 
         grid_cells[2, 2, 0, -1] = 1
-        grid_cells[2, 2, 1, -1] = 0.015
-        grid_cells[3, 2, 0, -1] = 0.05
-        grid_cells[2, 3, 0, -1] = 0.015
-        grid_cells[1, 2, 0, -1] = 1
-        grid_cells[2, 1, 0, -1] = 1
+        grid_cells[2, 2, 1, -1] = 0.5
+        grid_cells[3, 2, 0, -1] = 0.5
+        grid_cells[2, 3, 0, -1] = 0.6
+        grid_cells[1, 2, 0, -1] = 0.2
+        grid_cells[2, 1, 0, -1] = 1.0
 
     # choose an image to process
-    img_index = 1
+    img_index = 63
     imgs = imgs[img_index, :, :, :].unsqueeze(0)
     transform_matricies = transform_matricies[img_index, :, :].unsqueeze(0)
 
@@ -734,22 +737,20 @@ def main():
     t0 = time.time()
     transform_matricies, file_paths, camera_angle_x = load_data(data)
     samples_interval, pixels_to_rays, camera_positions, ray_directions = sample_camera_rays_batched(
-                                                                                    transform_matricies=transform_matricies,
-                                                                                    camera_angle_x=camera_angle_x,
-                                                                                    imgs=imgs,
-                                                                                    number_of_rays=number_of_rays,
-                                                                                    num_samples=num_samples,
-                                                                                    delta_step=delta_step,
-                                                                                    even_spread=even_spread,
-                                                                                    camera_ray=camera_ray
-                                                                                    )
+        transform_matricies=transform_matricies,
+        camera_angle_x=camera_angle_x,
+        imgs=imgs,
+        number_of_rays=number_of_rays,
+        num_samples=num_samples,
+        delta_step=delta_step,
+        even_spread=even_spread,
+        camera_ray=camera_ray
+    )
     normalized_samples_for_indecies = normalize_samples_for_indecies(grid_indices, samples_interval, points_distance)
-
 
     print(f"{samples_interval.shape=}\n{samples_interval[0]=}")
     print(f"{normalized_samples_for_indecies.shape=}\n{normalized_samples_for_indecies[0]=}")
     print(f"{normalized_samples_for_indecies.requires_grad=}")
-
 
     print(time.time() - t0)
 
@@ -769,14 +770,13 @@ def main():
     #                    ray_directions)
     # result = trilinear_interpolation(normalized_samples_for_indecies, selected_points, grid_cells)
 
-
-
     # -- visulize points on grid closest to sampled points of ray
     selected_points_voxels, outofbound_mask = get_nearest_voxels(normalized_samples_for_indecies, meshgrid)
     voxel_visulization(index, grid_grid, num_samples, number_of_rays, selected_points_voxels, samples_interval,
                        ray_directions)
 
     # print(f"{outofbound_mask.shape=}\n{outofbound_mask.unique(return_counts =True)}")
+
 
 if __name__ == "__main__":
     printi("start")

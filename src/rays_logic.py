@@ -210,27 +210,6 @@ def get_grid_points_indices(normalized_samples_for_indecies):
     return relevant_points
 
 
-def collect_cell_information_via_indices(normalized_samples_for_indecies, B):
-    edge_matching_points = get_grid_points_indices(normalized_samples_for_indecies)
-    A = edge_matching_points.reshape([edge_matching_points.shape[0] * edge_matching_points.shape[1],
-                                      edge_matching_points.shape[2]])
-
-    X, Y, Z, N = B.shape
-
-    # Calculate the indices along each dimension of B
-    idx1, idx2, idx3 = A[:, 0], A[:, 1], A[:, 2]
-
-    # wrap around coordinates that pass the grid. todo needs an alternative approach
-    idx1 %= X
-    idx2 %= Y
-    idx3 %= Z
-
-    # Use advanced indexing to get the values
-    output = B[idx1, idx2, idx3]
-    output = output.reshape([int(output.shape[0] / 8), 8, 3])
-
-    return output
-
 
 def get_grid(sx, sy, sz, points_distance=0.5, info_size=4):
     grindx_indices, grindy_indices, grindz_indices = torch.arange(sx), torch.arange(sy), torch.arange(sz)
@@ -523,21 +502,47 @@ def trilinear_interpolation(normalized_samples_for_indecies, selected_points, gr
     return newstep
 
 
-def get_nearest_voxels(normalized_samples_for_indecies, grid):
-    indecies = torch.round(normalized_samples_for_indecies).to(torch.long)
-    X, Y, Z, N = grid.shape
+def find_out_of_bound(indecies, grid):
     idx1, idx2, idx3 = indecies[:, 0], indecies[:, 1], indecies[:, 2]
 
     # find which points are outside the grid
+    X, Y, Z, N = grid.shape
     idx1_outofbounds = (idx1 < X) & (idx1 >= 0)
     idx2_outofbounds = (idx2 < Y) & (idx2 >= 0)
     idx3_outofbounds = (idx3 < Z) & (idx3 >= 0)
     outofbounds = idx1_outofbounds & idx2_outofbounds & idx3_outofbounds
 
+    return outofbounds
+
+
+def fix_out_of_bounds(indecies, grid):
+    idx1, idx2, idx3 = indecies[:, 0], indecies[:, 1], indecies[:, 2]
+    X, Y, Z, N = grid.shape
     idx1 %= X
     idx2 %= Y
     idx3 %= Z
+
+    return idx1, idx2, idx3
+
+
+def get_nearest_voxels(normalized_samples_for_indecies, grid):
+    indecies = torch.round(normalized_samples_for_indecies).to(torch.long)
+    outofbounds = find_out_of_bound(indecies, grid)
+    idx1, idx2, idx3 = fix_out_of_bounds(indecies, grid)
     return grid[idx1, idx2, idx3], outofbounds
+
+
+def collect_cell_information_via_indices(normalized_samples_for_indecies, B):
+    outofbounds = find_out_of_bound(normalized_samples_for_indecies, B)
+    edge_matching_points = get_grid_points_indices(normalized_samples_for_indecies)
+    A = edge_matching_points.reshape([edge_matching_points.shape[0] * edge_matching_points.shape[1],
+                                      edge_matching_points.shape[2]])
+
+    # Use advanced indexing to get the values
+    idx1, idx2, idx3 = fix_out_of_bounds(A, B)
+    output = B[idx1, idx2, idx3]
+    return output, outofbounds
+
 
 
 def fit(transform_matricies, camera_angle_x, imgs, number_of_rays, num_samples, delta_step, even_spread,
@@ -556,7 +561,7 @@ def fit(transform_matricies, camera_angle_x, imgs, number_of_rays, num_samples, 
     grid_indices, grid_cells, meshgrid, grid_grid = get_grid(gridsize[0], gridsize[1], gridsize[2],
                                                              points_distance=points_distance, info_size=4)
     normalized_samples_for_indecies = normalize_samples_for_indecies(grid_indices, samples_interval, points_distance)
-    selected_points = collect_cell_information_via_indices(normalized_samples_for_indecies, meshgrid)
+    selected_points, mask = collect_cell_information_via_indices(normalized_samples_for_indecies, meshgrid)
     interpolated_points = trilinear_interpolation(normalized_samples_for_indecies, selected_points, grid_cells)
 
     return
@@ -614,7 +619,7 @@ def inference_test_voxels():
     # parameters
     number_of_rays = 40000
     num_samples = 600
-    delta_step = 0.5
+    delta_step = 0.01
     even_spread = True
     camera_ray = False
     points_distance = 0.5  # *2*10
@@ -623,7 +628,7 @@ def inference_test_voxels():
     # loading data
     data_folder = r"D:\9.programming\Plenoxels\data"
     object_folders = ['chair', 'drums', 'ficus', 'hotdog', 'lego', 'materials', 'mic', 'ship']
-    object_folder = object_folders[1]
+    object_folder = object_folders[0]
     data, imgs = load_image_data(data_folder, object_folder)
     transform_matricies, file_paths, camera_angle_x = load_data(data)
 
@@ -633,19 +638,19 @@ def inference_test_voxels():
 
     # draw voxels to create an image
     with torch.no_grad():
-        grid_cells[2, 2, 0, 0] += 0  # 0.498
-        grid_cells[2, 2, 1, 0] += 0.5
-        grid_cells[3, 2, 0, 1:3] += 0.5
-        grid_cells[2, 3, 0, 1] += 0.5
-        grid_cells[1, 2, 0, 2] += 0.5
-        grid_cells[2, 1, 0, :2] += 0.5
+        grid_cells[2, 2, 0, 0]   = 1.0  # 0.498
+        grid_cells[2, 2, 1, 0]   = 1.0
+        grid_cells[3, 2, 0, 1:3] = 1.0
+        grid_cells[2, 3, 0, 1]   = 1.0
+        grid_cells[1, 2, 0, 2]   = 1.0
+        grid_cells[2, 1, 0, :2]  = 1.0
 
-        grid_cells[2, 2, 0, -1] = 1
+        grid_cells[2, 2, 0, -1] = 1.0
         grid_cells[2, 2, 1, -1] = 0.5
-        grid_cells[3, 2, 0, -1] = 0.5
-        grid_cells[2, 3, 0, -1] = 0.6
-        grid_cells[1, 2, 0, -1] = 0.2
-        grid_cells[2, 1, 0, -1] = 1.0
+        grid_cells[3, 2, 0, -1] = 0.2
+        grid_cells[2, 3, 0, -1] = 0.7
+        grid_cells[1, 2, 0, -1] = 1.0
+        grid_cells[2, 1, 0, -1] = 0.5
 
     # choose an image to process
     img_index = 63
@@ -666,8 +671,16 @@ def inference_test_voxels():
 
     # compute closest grid points to samples
     normalized_samples_for_indecies = normalize_samples_for_indecies(grid_indices, samples_interval, points_distance)
+
+    # -- knn via Manhattan distance --
     nearest, mask = get_nearest_voxels(normalized_samples_for_indecies, grid_cells)
     nearest = nearest * mask.unsqueeze(-1)  # zero the samples landing outside the grid
+
+    # -- interpolate 8 closest points --
+    # selected_points, mask = collect_cell_information_via_indices(normalized_samples_for_indecies, meshgrid)
+    # selected_points = selected_points.reshape([int(selected_points.shape[0] / 8), 8, 3])
+    # nearest = trilinear_interpolation(normalized_samples_for_indecies, selected_points, grid_cells)
+    # nearest = nearest * mask.unsqueeze(-1)
 
     # find pixels color
     nearest = nearest.reshape(1, number_of_rays, num_samples, 4)
@@ -711,21 +724,21 @@ def main():
     Returns:
     None
     """
-    # number_of_rays = 16
-    # num_samples = 9#200
-    # delta_step = 0.5
-    # even_spread = True
-    # camera_ray = False
-    # points_distance = 0.5#*2*10
-    # gridsize = [16, 16, 16]#64
-
-    number_of_rays = 9
-    num_samples = 60  # 200
-    delta_step = .1
+    number_of_rays = 16
+    num_samples = 9#200
+    delta_step = 0.5
     even_spread = True
     camera_ray = False
-    points_distance = 0.5  # *2*10
-    gridsize = [5, 5, 5]  # 64
+    points_distance = 0.5#*2*10
+    gridsize = [16, 16, 16]#64
+
+    # number_of_rays = 9
+    # num_samples = 60  # 200
+    # delta_step = .1
+    # even_spread = True
+    # camera_ray = False
+    # points_distance = 0.5  # *2*10
+    # gridsize = [5, 5, 5]  # 64
 
     data_folder = r"D:\9.programming\Plenoxels\data"
     object_folders = ['chair', 'drums', 'ficus', 'hotdog', 'lego', 'materials', 'mic', 'ship']
@@ -765,7 +778,8 @@ def main():
 
     # -- visulize grid around sampled points of ray
     index = 5
-    # selected_points = collect_cell_information_via_indices(normalized_samples_for_indecies, meshgrid)
+    # selected_points, mask = collect_cell_information_via_indices(normalized_samples_for_indecies, meshgrid)
+    # selected_points = selected_points.reshape([int(selected_points.shape[0] / 8), 8, 3])
     # paper_visulization(index, grid_grid, num_samples, number_of_rays, selected_points, samples_interval,
     #                    ray_directions)
     # result = trilinear_interpolation(normalized_samples_for_indecies, selected_points, grid_cells)

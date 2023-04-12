@@ -13,6 +13,12 @@ import matplotlib.colors as mcolors
 
 from mpl_toolkits.mplot3d import Axes3D
 
+from tqdm.auto import tqdm
+from torch.optim import SGD
+from torch.nn.functional import mse_loss
+from torch.optim.lr_scheduler import LambdaLR
+
+
 log_color = "\x1b[32;1m"
 logging.basicConfig(level=logging.INFO, format=f'{log_color}%(asctime)s - %(message)s')
 
@@ -31,7 +37,7 @@ def load_data(data):
 
 
 def sample_camera_rays_batched(transform_matricies, camera_angle_x, imgs, number_of_rays, num_samples, delta_step,
-                               even_spread, camera_ray):
+                               even_spread, camera_ray, device='cuda'):
     if even_spread:
         number_of_rays = int(np.round(np.sqrt(number_of_rays)) ** 2)
 
@@ -44,20 +50,21 @@ def sample_camera_rays_batched(transform_matricies, camera_angle_x, imgs, number
     else:
         current_ray_directions, pixels_to_rays = generate_rays_batched(imgs, number_of_rays, transform_matricies,
                                                                        camera_angle_x,
-                                                                       even_spread=even_spread)
+                                                                       even_spread=even_spread, device=device)
 
-    ray_directions = current_ray_directions
+    # Move tensors to specified device
+    current_ray_directions = current_ray_directions
     camera_positions = transform_matricies[:, :3, 3]
 
-    delta_forsamples = delta_step * torch.arange(num_samples + 1)[1:].repeat(number_of_rays * imgs.shape[0]) \
+    delta_forsamples = delta_step * torch.arange(num_samples + 1, device=device)[1:].repeat(number_of_rays * imgs.shape[0]) \
         .unsqueeze(1)
 
     camera_positions_forsamples = torch.repeat_interleave(camera_positions, num_samples * number_of_rays, 0)
 
-    ray_directions_for_samples = torch.repeat_interleave(ray_directions, num_samples, 0)
+    ray_directions_for_samples = torch.repeat_interleave(current_ray_directions, num_samples, 0)
     samples_interval = camera_positions_forsamples + ray_directions_for_samples * delta_forsamples
 
-    return samples_interval, pixels_to_rays, camera_positions, ray_directions
+    return samples_interval, pixels_to_rays, camera_positions, current_ray_directions
 
 
 def batched_cartesian_prod(A, B):
@@ -66,7 +73,7 @@ def batched_cartesian_prod(A, B):
     return torch.stack((A_expanded, B_expanded), dim=-1).view(A.size(0), -1, 2)
 
 
-def tensor_linspace(start, end, steps=10):
+def tensor_linspace(start, end, steps=10, device="cuda"):
     """
     # https://github.com/zhaobozb/layout2im/blob/master/models/bilinear.py#L246
 
@@ -86,9 +93,9 @@ def tensor_linspace(start, end, steps=10):
     w_size = (1,) * start.dim() + (steps,)
     out_size = start.size() + (steps,)
 
-    start_w = torch.linspace(1, 0, steps=steps).to(start)
+    start_w = torch.linspace(1, 0, steps=steps, device=device).to(start)
     start_w = start_w.view(w_size).expand(out_size)
-    end_w = torch.linspace(0, 1, steps=steps).to(start)
+    end_w = torch.linspace(0, 1, steps=steps, device=device).to(start)
     end_w = end_w.view(w_size).expand(out_size)
 
     start = start.contiguous().view(view_size).expand(out_size)
@@ -98,7 +105,7 @@ def tensor_linspace(start, end, steps=10):
     return out
 
 
-def generate_rays_batched(imgs, number_of_rays, transform_matricies, camera_angle_x, even_spread=False):
+def generate_rays_batched(imgs, number_of_rays, transform_matricies, camera_angle_x, even_spread=False, device='cuda'):
     """
         Generates rays for each camera and corresponding pixel indices.
 
@@ -107,6 +114,7 @@ def generate_rays_batched(imgs, number_of_rays, transform_matricies, camera_angl
             number_of_rays (int): Number of rays to generate for each camera.
             transform_matricies (torch.Tensor): Transformation matrices for cameras (B, 4, 4).
             camera_angle_x (float): Horizontal field of view of the camera.
+            device (str, optional): Device to use for computation. Defaults to 'cpu'.
             even_spread (bool, optional): Whether to generate rays with even spacing. Defaults to False (random spacing).
 
         Returns:
@@ -115,6 +123,10 @@ def generate_rays_batched(imgs, number_of_rays, transform_matricies, camera_angl
         """
 
     num_cameras = transform_matricies.shape[0]
+
+    # Move tensors to the specified device
+    # imgs = imgs.to(device)
+    # transform_matricies = transform_matricies.to(device)
 
     # Extract camera axes from transformation matrices
     camera_x_axis = transform_matricies[:, :3, 0]
@@ -126,10 +138,10 @@ def generate_rays_batched(imgs, number_of_rays, transform_matricies, camera_angl
         num_rays_sqrt = np.round(np.sqrt(number_of_rays))
 
         # Compute evenly spaced u and v values for rays
-        start = torch.tensor([-0.5 * camera_angle_x]).repeat(aspect_ratio.shape)
-        u_values = torch.linspace(-0.5 * camera_angle_x, 0.5 * camera_angle_x, int(num_rays_sqrt)).unsqueeze(0).repeat(
-            [aspect_ratio.shape[0], 1])
-        v_values = -tensor_linspace(start / aspect_ratio, -start / aspect_ratio, int(num_rays_sqrt))
+        start = torch.tensor([-0.5 * camera_angle_x], device=device).repeat(aspect_ratio.shape)
+        u_values = torch.linspace(-0.5 * camera_angle_x, 0.5 * camera_angle_x, int(num_rays_sqrt),
+                                  device=device).unsqueeze(0).repeat( [aspect_ratio.shape[0], 1])
+        v_values = -tensor_linspace(start / aspect_ratio, -start / aspect_ratio, int(num_rays_sqrt), device=device)
 
         # Calculate ray indices using Cartesian product
         ray_indices = batched_cartesian_prod(u_values, v_values)
@@ -137,7 +149,7 @@ def generate_rays_batched(imgs, number_of_rays, transform_matricies, camera_angl
     else:
         # Generate random ray indices
         ray_indices = torch.rand(transform_matricies.shape[0], number_of_rays,
-                                 2)  # Generate random numbers in the range [0, 1)
+                                 2, device=device)  # Generate random numbers in the range [0, 1)
 
         # Scale and shift the ray indices to match the camera's FOV
         ray_indices[:, :, 0] = camera_angle_x * (ray_indices[:, :, 0] - 0.5)
@@ -155,7 +167,8 @@ def generate_rays_batched(imgs, number_of_rays, transform_matricies, camera_angl
     pixel_indices = pixel_indices.to(torch.long)
 
     # Map pixel indices to camera indices
-    camera_to_ray = torch.repeat_interleave(torch.arange(0, transform_matricies.shape[0]), number_of_rays, 0)
+    camera_to_ray = torch.repeat_interleave(torch.arange(0, transform_matricies.shape[0], device=device),
+                                            number_of_rays, 0)
     pixel_indices = pixel_indices.reshape([pixel_indices.shape[0] * pixel_indices.shape[1], pixel_indices.shape[2]])
     # pixels_to_rays = imgs[camera_to_ray, pixel_indices[:, 0], pixel_indices[:, 1]]
     # the y dimension is the first one, the x dimension is the second in an image
@@ -211,8 +224,8 @@ def get_grid_points_indices(normalized_samples_for_indecies):
 
 
 
-def get_grid(sx, sy, sz, points_distance=0.5, info_size=4):
-    grindx_indices, grindy_indices, grindz_indices = torch.arange(sx), torch.arange(sy), torch.arange(sz)
+def get_grid(sx, sy, sz, points_distance=0.5, info_size=4, device="cuda"):
+    grindx_indices, grindy_indices, grindz_indices = torch.arange(sx, device=device), torch.arange(sy, device=device), torch.arange(sz, device=device)
     coordsx, coordsy, coordsz = torch.meshgrid(grindx_indices, grindy_indices, grindz_indices, indexing='ij')
 
     meshgrid = torch.stack([coordsx, coordsy, coordsz], dim=-1)
@@ -224,14 +237,14 @@ def get_grid(sx, sy, sz, points_distance=0.5, info_size=4):
     # edit grid spacing
     coordsx, coordsy, coordsz = coordsx * points_distance, coordsy * points_distance, coordsz * points_distance
 
-    # make it so no points of the grid are underground
-    coordsz = coordsz - coordsz.min()
+    # make it so no points of the grid are underground (currently off, the assumption is untrue)
+    # coordsz = coordsz - coordsz.min()
 
     grid_grid = torch.stack([coordsx, coordsy, coordsz], dim=-1)
     grid_coords = grid_grid.reshape(sx * sy * sz, 3)
 
     grid_cells = torch.zeros([grid_grid.shape[0], grid_grid.shape[1], grid_grid.shape[2], info_size],
-                             requires_grad=True)
+                             requires_grad=True, device=device)
 
     return grid_coords, grid_cells, meshgrid, grid_grid
 
@@ -433,10 +446,12 @@ def sample_camera_rays(data, number_of_rays, num_samples, delta_step, even_sprea
     return samples_interval, camera_positions, ray_directions
 
 
-def load_image_data(data_folder, object_folder):
-    with open(f"{data_folder}/{object_folder}/transforms_train.json", "r") as f:
+def load_image_data(data_folder, object_folder, split="train"):
+
+    with open(f"{data_folder}/{object_folder}/transforms_{split}.json", "r") as f:
         data = json.load(f)
-    imgs = [Image.open(f'{data_folder}/{object_folder}/train/{frame["file_path"].split("/")[-1]}.png') for frame in
+
+    imgs = [Image.open(f'{data_folder}/{object_folder}/{split}/{frame["file_path"].split("/")[-1]}.png') for frame in
             data["frames"]]
     imgs = np.array([np.array(img) for img in imgs])
     imgs = torch.tensor(imgs, dtype=torch.float)
@@ -490,14 +505,15 @@ def trilinear_interpolation(normalized_samples_for_indecies, selected_points, gr
     selection0 = grid_cells[selected_points[:, 4:, 0], selected_points[:, 4:, 1], selected_points[:, 4:, 2]]
     selection1 = grid_cells[selected_points[:, :4, 0], selected_points[:, :4, 1], selected_points[:, :4, 2]]
 
-    inteplation_frac_step1 = inteplation_frac[:, 0].unsqueeze(-1).unsqueeze(-1)
-    newstep = (selection1 * inteplation_frac_step1) + (selection0 * (1 - inteplation_frac_step1))
+    inteplation_frac_step = inteplation_frac[:, 0].unsqueeze(-1).unsqueeze(-1)
+    newstep = (selection1 * inteplation_frac_step) + (selection0 * (1 - inteplation_frac_step))
+    del selection0, selection1
 
-    inteplation_frac_step2 = inteplation_frac[:, 1].unsqueeze(-1).unsqueeze(-1)
-    newstep = (newstep[:, :2] * inteplation_frac_step2) + (newstep[:, 2:] * (1 - inteplation_frac_step2))
+    inteplation_frac_step = inteplation_frac[:, 1].unsqueeze(-1).unsqueeze(-1)
+    newstep = (newstep[:, :2] * inteplation_frac_step) + (newstep[:, 2:] * (1 - inteplation_frac_step))
 
-    inteplation_frac_step3 = inteplation_frac[:, 2].unsqueeze(-1)
-    newstep = (newstep[:, 0] * inteplation_frac_step3) + (newstep[:, 1] * (1 - inteplation_frac_step3))
+    inteplation_frac_step = inteplation_frac[:, 2].unsqueeze(-1)
+    newstep = (newstep[:, 0] * inteplation_frac_step) + (newstep[:, 1] * (1 - inteplation_frac_step))
 
     return newstep
 
@@ -545,26 +561,6 @@ def collect_cell_information_via_indices(normalized_samples_for_indecies, B):
 
 
 
-def fit(transform_matricies, camera_angle_x, imgs, number_of_rays, num_samples, delta_step, even_spread,
-        camera_ray, points_distance, gridsize):
-    samples_interval, pixels_to_rays, camera_positions, ray_directions = sample_camera_rays_batched(
-        transform_matricies=transform_matricies,
-        camera_angle_x=camera_angle_x,
-        imgs=imgs,
-        number_of_rays=number_of_rays,
-        num_samples=num_samples,
-        delta_step=delta_step,
-        even_spread=even_spread,
-        camera_ray=camera_ray
-    )
-
-    grid_indices, grid_cells, meshgrid, grid_grid = get_grid(gridsize[0], gridsize[1], gridsize[2],
-                                                             points_distance=points_distance, info_size=4)
-    normalized_samples_for_indecies = normalize_samples_for_indecies(grid_indices, samples_interval, points_distance)
-    selected_points, mask = collect_cell_information_via_indices(normalized_samples_for_indecies, meshgrid)
-    interpolated_points = trilinear_interpolation(normalized_samples_for_indecies, selected_points, grid_cells)
-
-    return
 
 
 def voxel_visulization(index, grid_grid, num_samples, number_of_rays, selected_points_voxels, samples_interval,
@@ -615,35 +611,167 @@ def compute_alpha_weighted_pixels(samples):
     return res
 
 
-def inference_test_voxels():
-    # parameters
-    number_of_rays = 40000
-    num_samples = 600
-    delta_step = 0.01
+def fit():
+    device = "cuda"
+    number_of_rays = 625
+    num_samples = 120  # 200
+    delta_step = 0.1
     even_spread = True
     camera_ray = False
-    points_distance = 0.5  # *2*10
-    gridsize = [5, 5, 5]  # 64
+    points_distance = 0.1  # *2*10
+    gridsize = [32, 32, 32]
 
-    # loading data
+    lr = 2.8
+
+    # loading data and sending to device
     data_folder = r"D:\9.programming\Plenoxels\data"
     object_folders = ['chair', 'drums', 'ficus', 'hotdog', 'lego', 'materials', 'mic', 'ship']
     object_folder = object_folders[0]
     data, imgs = load_image_data(data_folder, object_folder)
     transform_matricies, file_paths, camera_angle_x = load_data(data)
+    transform_matricies, imgs = transform_matricies.to(device), imgs.to(device)
+
+    grid_indices, grid_cells, meshgrid, grid_grid = get_grid(gridsize[0], gridsize[1], gridsize[2],
+                                                             points_distance=points_distance, info_size=4,
+                                                             device=device)
+
+    optimizer = SGD([grid_cells], lr=lr)
+    lr_decay = lambda step: max(5e-6, lr * 0.5 ** (step / 25000))
+    # lr_decay = lambda step: max(0.01, lr * 0.5 ** (step / 2500))
+    scheduler = LambdaLR(optimizer, lr_lambda=lr_decay)
+
+    steps = 5000
+    loss_hist = []
+    sparsity_loss_hist = []
+
+    pbar = tqdm(total=steps, desc="Processing items")
+    for i in range(steps):
+
+        # generate samples
+        samples_interval, pixels_to_rays, camera_positions, ray_directions = sample_camera_rays_batched(
+            transform_matricies=transform_matricies,
+            camera_angle_x=camera_angle_x,
+            imgs=imgs,
+            number_of_rays=number_of_rays,
+            num_samples=num_samples,
+            delta_step=delta_step,
+            even_spread=even_spread,
+            camera_ray=camera_ray,
+            device=device
+        )
+
+        normalized_samples_for_indecies = normalize_samples_for_indecies(grid_indices, samples_interval, points_distance)
+
+        # -- knn via Manhattan distance --
+        nearest, mask = get_nearest_voxels(normalized_samples_for_indecies, grid_cells)
+        nearest = nearest * mask.unsqueeze(-1)  # zero the samples landing outside the grid
+
+        # find pixels color
+        nearest = nearest.reshape(100, number_of_rays, num_samples, 4)
+        pixels_color = compute_alpha_weighted_pixels(nearest)
+        color_shape = pixels_color.shape
+
+        pixels_color = pixels_color.reshape([color_shape[0]*color_shape[1], color_shape[2]])
+
+        sparsity_loss = torch.log(1 + 2 * ((nearest[..., -1]).clip(min=0.0, max=1.0)) ** 2).mean() # todo check if needed
+        loss = mse_loss(pixels_color, pixels_to_rays) #+ 2*sparsity_loss
+
+        optimizer.zero_grad()
+        loss.backward()
+        optimizer.step()
+        # scheduler.step()
+
+        loss_detached = loss.cpu().detach()
+        loss_hist.append(loss_detached)
+        sparsity_loss_hist.append(sparsity_loss.detach().cpu())
+
+        pbar.update(1)
+        pbar.set_description(f"loss:{loss_detached}")
+
+    torch.save({
+        "grid": grid_cells,
+        "param":{
+            "device": device,
+            "number_of_rays": number_of_rays,
+            "num_samples": num_samples,
+            "delta_step": delta_step,
+            "even_spread": even_spread,
+            "camera_ray": camera_ray,
+            "points_distance": points_distance,
+            "gridsize": gridsize,
+        },
+    }, "grid_cells_trained.pth")
+
+    """
+    import numpy as np
+    from sklearn.linear_model import LinearRegression
+
+    # Generate some sample data
+    x = np.arange(len(loss_hist[2000:]))
+    y = np.array(loss_hist[2000:])
+
+    # Take the logarithm of y
+    ylog = np.log(y)
+
+    # Fit a linear regression model
+    model = LinearRegression().fit(x.reshape(-1, 1), ylog)
+
+    # Extract the slope and intercept of the line
+    m = -model.coef_[0]
+    c = model.intercept_
+
+    # Print the equation of the line
+    print(f"y = {np.exp(c):.4f} * exp(-{m} * x)")
+    """
+
+    plt.plot(loss_hist)
+    plt.plot(sparsity_loss_hist)
+    plt.show()
+
+    return
+
+
+def inference_test_voxels(grid_cells_path="", transparency_threshold=0.2):
+    # parameters
+    # device = "cuda"
+    # number_of_rays = 2500
+    # num_samples = 600
+    # delta_step = 0.01
+    # even_spread = False
+    # camera_ray = False
+    # points_distance = 0.5  # *2*10
+    # gridsize = [5, 5, 5]  # 64
+
+    device = "cuda"
+    number_of_rays = 40000
+    num_samples = 600  # 200
+    delta_step = 0.01
+    even_spread = True
+    camera_ray = False
+    points_distance = 0.1  # *2*10
+    gridsize = [32, 32, 32]
+
+    # loading data
+    data_folder = r"D:\9.programming\Plenoxels\data"
+    object_folders = ['chair', 'drums', 'ficus', 'hotdog', 'lego', 'materials', 'mic', 'ship']
+    object_folder = object_folders[0]
+    data, imgs = load_image_data(data_folder, object_folder, split="test")
+    transform_matricies, file_paths, camera_angle_x = load_data(data)
+
+    transform_matricies, imgs = transform_matricies.to(device), imgs.to(device)
 
     # generate grid
     grid_indices, grid_cells, meshgrid, grid_grid = get_grid(gridsize[0], gridsize[1], gridsize[2],
-                                                             points_distance=points_distance, info_size=4)
+                                                             points_distance=points_distance, info_size=4, device=device)
 
     # draw voxels to create an image
     with torch.no_grad():
-        grid_cells[2, 2, 0, 0]   = 1.0  # 0.498
-        grid_cells[2, 2, 1, 0]   = 1.0
+        grid_cells[2, 2, 0, 0] = 1.0  # 0.498
+        grid_cells[2, 2, 1, 0] = 1.0
         grid_cells[3, 2, 0, 1:3] = 1.0
-        grid_cells[2, 3, 0, 1]   = 1.0
-        grid_cells[1, 2, 0, 2]   = 1.0
-        grid_cells[2, 1, 0, :2]  = 1.0
+        grid_cells[2, 3, 0, 1] = 1.0
+        grid_cells[1, 2, 0, 2] = 1.0
+        grid_cells[2, 1, 0, :2] = 1.0
 
         grid_cells[2, 2, 0, -1] = 1.0
         grid_cells[2, 2, 1, -1] = 0.5
@@ -652,12 +780,18 @@ def inference_test_voxels():
         grid_cells[1, 2, 0, -1] = 1.0
         grid_cells[2, 1, 0, -1] = 0.5
 
+    if len(grid_cells_path) > 0:
+        grid_cells = torch.load(grid_cells_path)["grid"].to(device).clip(0.0, 1.0)
+        print(torch.unique(grid_cells, return_counts=True))
+        grid_cells[grid_cells[..., -1] < transparency_threshold] = 0
+
     # choose an image to process
-    img_index = 63
+    img_index = 45
     imgs = imgs[img_index, :, :, :].unsqueeze(0)
     transform_matricies = transform_matricies[img_index, :, :].unsqueeze(0)
 
     # generate samples
+    t0 = time.time()
     samples_interval, pixels_to_rays, camera_positions, ray_directions = sample_camera_rays_batched(
         transform_matricies=transform_matricies,
         camera_angle_x=camera_angle_x,
@@ -666,7 +800,8 @@ def inference_test_voxels():
         num_samples=num_samples,
         delta_step=delta_step,
         even_spread=even_spread,
-        camera_ray=camera_ray
+        camera_ray=camera_ray,
+        device=device
     )
 
     # compute closest grid points to samples
@@ -687,17 +822,42 @@ def inference_test_voxels():
     pixels_color = compute_alpha_weighted_pixels(nearest)
 
     # -- reshape and normalize an image and show --
-    pixels_color = pixels_color.detach().numpy()
+    pixels_color = pixels_color.cpu().detach().numpy()
     pixels_color = (pixels_color * 255).round().clip(0, 255).astype(np.uint8)
     image = pixels_color.reshape(200, 200, 4)
     image = np.transpose(image, (1, 0, 2))
 
     # -- sanity test for image --
-    # image = pixels_to_rays.reshape(200, 200, 4).numpy()
-    # image = (image * 255).astype(np.uint8)
-    # image = np.transpose(image, (1, 0, 2))
+    image_gt = pixels_to_rays.reshape(200, 200, 4).cpu().detach().numpy()
+    image_gt = (image_gt * 255).astype(np.uint8)
+    image_gt = np.transpose(image_gt, (1, 0, 2))
 
-    plt.imshow(image)
+    print(time.time() - t0)
+
+    # plt.imshow(image)
+    # plt.imshow(image_gt)
+    # plt.show()
+
+    fig = plt.figure()
+
+    ax1 = fig.add_subplot(121)
+    ax2 = fig.add_subplot(122)
+    fig.subplots_adjust(left=0.05, bottom=0.05, right=None, top=None, wspace=0.0, hspace=None)
+    for ax in fig.axes:
+        ax.xaxis.set_visible(False)
+        ax.yaxis.set_visible(False)
+    ax1.imshow(image)
+    ax2.imshow(image_gt)
+    fig.set_size_inches((8, 6))
+    plt.show()
+
+    np_array = grid_cells[..., -1].detach().flatten().cpu().numpy()
+    plt.hist(np_array, bins=900)
+    plt.xlabel('Value')
+    plt.ylabel('Frequency')
+    plt.title('Histogram of PyTorch Tensor Values')
+
+    # Display the histogram
     plt.show()
 
     return
@@ -724,14 +884,25 @@ def main():
     Returns:
     None
     """
+    device = "cpu"
     number_of_rays = 16
-    num_samples = 9#200
-    delta_step = 0.5
+    num_samples = 30#200
+    delta_step = 0.2
     even_spread = True
     camera_ray = False
     points_distance = 0.5#*2*10
     gridsize = [16, 16, 16]#64
 
+    # device = "cpu"
+    # number_of_rays = 16
+    # num_samples = 30  # 200
+    # delta_step = 0.2
+    # even_spread = True
+    # camera_ray = False
+    # points_distance = 0.2  # *2*10
+    # gridsize = [16, 16, 16]  # 64
+
+    # device = "cuda"
     # number_of_rays = 9
     # num_samples = 60  # 200
     # delta_step = .1
@@ -746,9 +917,15 @@ def main():
     data, imgs = load_image_data(data_folder, object_folder)
 
     grid_indices, grid_cells, meshgrid, grid_grid = get_grid(gridsize[0], gridsize[1], gridsize[2],
-                                                             points_distance=points_distance, info_size=4)
-    t0 = time.time()
+                                                             points_distance=points_distance, info_size=4,
+                                                             device=device)
+
     transform_matricies, file_paths, camera_angle_x = load_data(data)
+
+    transform_matricies = transform_matricies.to(device)
+    imgs = imgs.to(device)
+
+    t0 = time.time()
     samples_interval, pixels_to_rays, camera_positions, ray_directions = sample_camera_rays_batched(
         transform_matricies=transform_matricies,
         camera_angle_x=camera_angle_x,
@@ -757,43 +934,58 @@ def main():
         num_samples=num_samples,
         delta_step=delta_step,
         even_spread=even_spread,
-        camera_ray=camera_ray
+        camera_ray=camera_ray,
+        device=device
     )
     normalized_samples_for_indecies = normalize_samples_for_indecies(grid_indices, samples_interval, points_distance)
-
+    print(time.time() - t0)
     print(f"{samples_interval.shape=}\n{samples_interval[0]=}")
     print(f"{normalized_samples_for_indecies.shape=}\n{normalized_samples_for_indecies[0]=}")
     print(f"{normalized_samples_for_indecies.requires_grad=}")
 
-    print(time.time() - t0)
 
     # -- visulize grid
+    # ray_directions = ray_directions.to("cpu")
+    # grid_indices = grid_indices.to("cpu")
     # visualize_rays_3d(ray_directions, [], grid_indices)
 
     # -- visulize camera rays and samples along rays
     # ray_positions = torch.repeat_interleave(camera_positions, number_of_rays, 0)
     # sampled_rays = samples_interval[num_samples*number_of_rays*10:num_samples*(number_of_rays*10 + number_of_rays)]
+    # ray_directions, ray_positions,  = ray_directions.to("cpu"), ray_positions.to("cpu")
+    # sampled_rays, grid_indices = sampled_rays.to("cpu"), grid_indices.to("cpu")
+    #
     # visualize_rays_3d(ray_directions, ray_positions, sampled_rays, grid_indices)
     # visualize_rays_3d(ray_directions, ray_positions, sampled_rays)
 
     # -- visulize grid around sampled points of ray
     index = 5
-    # selected_points, mask = collect_cell_information_via_indices(normalized_samples_for_indecies, meshgrid)
-    # selected_points = selected_points.reshape([int(selected_points.shape[0] / 8), 8, 3])
-    # paper_visulization(index, grid_grid, num_samples, number_of_rays, selected_points, samples_interval,
-    #                    ray_directions)
+    selected_points, mask = collect_cell_information_via_indices(normalized_samples_for_indecies, meshgrid)
+    selected_points = selected_points.reshape([int(selected_points.shape[0] / 8), 8, 3])
+    grid_grid = grid_grid.to("cpu")
+    selected_points = selected_points.to("cpu")
+    samples_interval = samples_interval.to("cpu")
+    ray_directions = ray_directions.to("cpu")
+    paper_visulization(index, grid_grid, num_samples, number_of_rays, selected_points, samples_interval,
+                       ray_directions)
     # result = trilinear_interpolation(normalized_samples_for_indecies, selected_points, grid_cells)
 
     # -- visulize points on grid closest to sampled points of ray
-    selected_points_voxels, outofbound_mask = get_nearest_voxels(normalized_samples_for_indecies, meshgrid)
-    voxel_visulization(index, grid_grid, num_samples, number_of_rays, selected_points_voxels, samples_interval,
-                       ray_directions)
+    # selected_points_voxels, outofbound_mask = get_nearest_voxels(normalized_samples_for_indecies, meshgrid)
+    # grid_grid = grid_grid.to("cpu")
+    # selected_points_voxels = selected_points_voxels.to("cpu")
+    # samples_interval = samples_interval.to("cpu")
+    # ray_directions = ray_directions.to("cpu")
+    # print(f"{[t.is_cuda for t in [grid_grid, selected_points_voxels, samples_interval, ray_directions]]}")
+    # voxel_visulization(index, grid_grid, num_samples, number_of_rays, selected_points_voxels,
+    #                    samples_interval, ray_directions)
 
     # print(f"{outofbound_mask.shape=}\n{outofbound_mask.unique(return_counts =True)}")
 
 
 if __name__ == "__main__":
     printi("start")
+    # fit()
     # main()
-    inference_test_voxels()
+    inference_test_voxels(grid_cells_path="grid_cells_trained_32x32.pth")
     printi("end")

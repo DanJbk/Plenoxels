@@ -15,6 +15,7 @@ from mpl_toolkits.mplot3d import Axes3D
 
 from tqdm.auto import tqdm
 from torch.optim import SGD
+from torch.optim import Adam
 from torch.nn.functional import mse_loss
 from torch.optim.lr_scheduler import LambdaLR
 
@@ -610,39 +611,55 @@ def compute_alpha_weighted_pixels(samples):
     res = torch.cat([samples, final_alpha], dim=2)
     return res
 
+def tv_loss(voxel_grid):
+    # Compute gradient of voxel grid
+    grad_x = (voxel_grid[:, :, :-1, -1] - voxel_grid[:, :, 1:, -1])
+    grad_y = (voxel_grid[:, :-1, :, -1] - voxel_grid[:, 1:, :, -1])
+    grad_z = (voxel_grid[:-1, :, :, -1] - voxel_grid[1:, :, :, -1])
+
+    # Compute TV loss
+    tv_loss = torch.mean(grad_x**2) + torch.mean(grad_y**2) + torch.mean(grad_z**2)
+
+    return tv_loss
 
 def fit():
     device = "cuda"
-    number_of_rays = 625
-    num_samples = 120  # 200
-    delta_step = 0.1
-    even_spread = True
+    number_of_rays = 900
+    num_samples = 600  # 200
+    delta_step = 0.0125
+    even_spread = False
     camera_ray = False
-    points_distance = 0.1  # *2*10
-    gridsize = [32, 32, 32]
+    points_distance = 0.0125  # *2*10
+    gridsize = [256, 256, 256]
 
-    lr = 2.8
+    lr = 0.005
 
     # loading data and sending to device
     data_folder = r"D:\9.programming\Plenoxels\data"
     object_folders = ['chair', 'drums', 'ficus', 'hotdog', 'lego', 'materials', 'mic', 'ship']
     object_folder = object_folders[0]
-    data, imgs = load_image_data(data_folder, object_folder)
+    data, imgs = load_image_data(data_folder, object_folder, split="test")
     transform_matricies, file_paths, camera_angle_x = load_data(data)
     transform_matricies, imgs = transform_matricies.to(device), imgs.to(device)
+
+    transform_matricies, imgs = transform_matricies[[1, 33, 44, 55, 66, 77, 88, 99], ...], imgs[[1, 33, 44, 55, 66, 77, 88, 99], ...]
 
     grid_indices, grid_cells, meshgrid, grid_grid = get_grid(gridsize[0], gridsize[1], gridsize[2],
                                                              points_distance=points_distance, info_size=4,
                                                              device=device)
+    with torch.no_grad():
+        grid_cells[:, :, :, :-1] = 1.0
 
-    optimizer = SGD([grid_cells], lr=lr)
-    lr_decay = lambda step: max(5e-6, lr * 0.5 ** (step / 25000))
+    # optimizer = SGD([grid_cells], lr=lr)
+    optimizer = Adam([grid_cells], lr=lr)
+    # lr_decay = lambda step: max(0.01, lr * 0.5 ** (step / 7500))
     # lr_decay = lambda step: max(0.01, lr * 0.5 ** (step / 2500))
-    scheduler = LambdaLR(optimizer, lr_lambda=lr_decay)
+    # scheduler = LambdaLR(optimizer, lr_lambda=lr_decay)
 
-    steps = 5000
+    steps = 1500
     loss_hist = []
     sparsity_loss_hist = []
+    tv_loss_hist = []
 
     pbar = tqdm(total=steps, desc="Processing items")
     for i in range(steps):
@@ -667,26 +684,40 @@ def fit():
         nearest = nearest * mask.unsqueeze(-1)  # zero the samples landing outside the grid
 
         # find pixels color
-        nearest = nearest.reshape(100, number_of_rays, num_samples, 4)
+        nearest = nearest.reshape(imgs.shape[0], number_of_rays, num_samples, 4)
         pixels_color = compute_alpha_weighted_pixels(nearest)
         color_shape = pixels_color.shape
 
         pixels_color = pixels_color.reshape([color_shape[0]*color_shape[1], color_shape[2]])
 
-        sparsity_loss = torch.log(1 + 2 * ((nearest[..., -1]).clip(min=0.0, max=1.0)) ** 2).mean() # todo check if needed
-        loss = mse_loss(pixels_color, pixels_to_rays) #+ 2*sparsity_loss
+        # sparsity_loss = 1000*torch.log(1 + 2 * ((nearest[..., -1])) ** 2).mean() # todo check if needed
+        # sparsity_loss = 100*(nearest[..., -1]).mean() # todo check if needed
+        # tvloss = 1000*tv_loss(grid_cells)
+        tvloss = torch.tensor([0])
+        sparsity_loss = torch.tensor(0)
+        # l2_loss = 0#10*(grid_cells[:,:,:,-1]**2).mean()
+        loss = mse_loss(pixels_color, pixels_to_rays)# + sparsity_loss #+ tvloss
 
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
         # scheduler.step()
 
+        with torch.no_grad():
+            grid_cells.clamp_(min=0, max=1)
+
+        # print(grid_cells.grad.min())
+
         loss_detached = loss.cpu().detach()
+        sparsity_loss_detached = sparsity_loss.detach().cpu()
+        tvloss_detached = tvloss.detach().cpu()
         loss_hist.append(loss_detached)
-        sparsity_loss_hist.append(sparsity_loss.detach().cpu())
+        sparsity_loss_hist.append(sparsity_loss_detached)
+        tv_loss_hist.append(tvloss_detached)
 
         pbar.update(1)
-        pbar.set_description(f"loss:{loss_detached}")
+
+        pbar.set_description(f"loss:{loss_detached} sparcity: {sparsity_loss_detached} tv: {tvloss_detached}")
 
     torch.save({
         "grid": grid_cells,
@@ -731,7 +762,7 @@ def fit():
     return
 
 
-def inference_test_voxels(grid_cells_path="", transparency_threshold=0.2):
+def inference_test_voxels(grid_cells_path="", transparency_threshold=0.2, imgindex=26, do_threshold=False):
     # parameters
     # device = "cuda"
     # number_of_rays = 2500
@@ -745,11 +776,11 @@ def inference_test_voxels(grid_cells_path="", transparency_threshold=0.2):
     device = "cuda"
     number_of_rays = 40000
     num_samples = 600  # 200
-    delta_step = 0.01
+    delta_step = 0.0120
     even_spread = True
     camera_ray = False
-    points_distance = 0.1  # *2*10
-    gridsize = [32, 32, 32]
+    points_distance = 0.0125  # *2*10
+    gridsize = [256, 256, 256]
 
     # loading data
     data_folder = r"D:\9.programming\Plenoxels\data"
@@ -781,12 +812,19 @@ def inference_test_voxels(grid_cells_path="", transparency_threshold=0.2):
         grid_cells[2, 1, 0, -1] = 0.5
 
     if len(grid_cells_path) > 0:
-        grid_cells = torch.load(grid_cells_path)["grid"].to(device).clip(0.0, 1.0)
-        print(torch.unique(grid_cells, return_counts=True))
-        grid_cells[grid_cells[..., -1] < transparency_threshold] = 0
+        grid_cells = torch.load(grid_cells_path)["grid"].to(device)
+        print(grid_cells.min(), grid_cells.max(), grid_cells.mean(), grid_cells.std())
+        # grid_cells = grid_cells * (1/(grid_cells.mean()))
+        # print(grid_cells.min(), grid_cells.max())
+        grid_cells = grid_cells.clip(0.0, 1.0)
+        if do_threshold:
+            alphas = grid_cells[..., -1]
+            alphas[alphas < transparency_threshold] = 0.0
+            # alphas[alphas > transparency_threshold] = 1.0
+        # grid_cells[..., -1] = alphas
 
     # choose an image to process
-    img_index = 45
+    img_index = imgindex #26#155 #45
     imgs = imgs[img_index, :, :, :].unsqueeze(0)
     transform_matricies = transform_matricies[img_index, :, :].unsqueeze(0)
 
@@ -884,14 +922,23 @@ def main():
     Returns:
     None
     """
-    device = "cpu"
-    number_of_rays = 16
-    num_samples = 30#200
-    delta_step = 0.2
-    even_spread = True
+    # device = "cpu"
+    # number_of_rays = 16
+    # num_samples = 30#200
+    # delta_step = 0.2
+    # even_spread = True
+    # camera_ray = False
+    # points_distance = 0.5#*2*10
+    # gridsize = [16, 16, 16]#64
+
+    device = "cuda"
+    number_of_rays = 25
+    num_samples = 240  # 200
+    delta_step = 0.05
+    even_spread = False
     camera_ray = False
-    points_distance = 0.5#*2*10
-    gridsize = [16, 16, 16]#64
+    points_distance = 0.05  # *2*10
+    gridsize = [64, 64, 64]
 
     # device = "cpu"
     # number_of_rays = 16
@@ -987,5 +1034,5 @@ if __name__ == "__main__":
     printi("start")
     # fit()
     # main()
-    inference_test_voxels(grid_cells_path="grid_cells_trained_32x32.pth")
+    inference_test_voxels(grid_cells_path="grid_cells_trained.pth", transparency_threshold=0.05, imgindex=160, do_threshold=True)
     printi("end")

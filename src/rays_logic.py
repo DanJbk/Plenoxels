@@ -763,6 +763,7 @@ def fit():
 
 
 def inference_test_voxels(grid_cells_path="", transparency_threshold=0.2, imgindex=26, do_threshold=False):
+
     # parameters
     # device = "cuda"
     # number_of_rays = 2500
@@ -794,22 +795,6 @@ def inference_test_voxels(grid_cells_path="", transparency_threshold=0.2, imgind
     # generate grid
     grid_indices, grid_cells, meshgrid, grid_grid = get_grid(gridsize[0], gridsize[1], gridsize[2],
                                                              points_distance=points_distance, info_size=4, device=device)
-
-    # draw voxels to create an image
-    with torch.no_grad():
-        grid_cells[2, 2, 0, 0] = 1.0  # 0.498
-        grid_cells[2, 2, 1, 0] = 1.0
-        grid_cells[3, 2, 0, 1:3] = 1.0
-        grid_cells[2, 3, 0, 1] = 1.0
-        grid_cells[1, 2, 0, 2] = 1.0
-        grid_cells[2, 1, 0, :2] = 1.0
-
-        grid_cells[2, 2, 0, -1] = 1.0
-        grid_cells[2, 2, 1, -1] = 0.5
-        grid_cells[3, 2, 0, -1] = 0.2
-        grid_cells[2, 3, 0, -1] = 0.7
-        grid_cells[1, 2, 0, -1] = 1.0
-        grid_cells[2, 1, 0, -1] = 0.5
 
     if len(grid_cells_path) > 0:
         grid_cells = torch.load(grid_cells_path)["grid"].to(device)
@@ -872,31 +857,72 @@ def inference_test_voxels(grid_cells_path="", transparency_threshold=0.2, imgind
 
     print(time.time() - t0)
 
-    # plt.imshow(image)
-    # plt.imshow(image_gt)
+    # # plt.imshow(image)
+    # # plt.imshow(image_gt)
+    # # plt.show()
+    #
+    # fig = plt.figure()
+    #
+    # ax1 = fig.add_subplot(121)
+    # ax2 = fig.add_subplot(122)
+    # fig.subplots_adjust(left=0.05, bottom=0.05, right=None, top=None, wspace=0.0, hspace=None)
+    # for ax in fig.axes:
+    #     ax.xaxis.set_visible(False)
+    #     ax.yaxis.set_visible(False)
+    # ax1.imshow(image)
+    # ax2.imshow(image_gt)
+    # fig.set_size_inches((8, 6))
+    # plt.show()
+    #
+    # np_array = grid_cells[..., -1].detach().flatten().cpu().numpy()
+    # plt.hist(np_array, bins=900)
+    # plt.xlabel('Value')
+    # plt.ylabel('Frequency')
+    # plt.title('Histogram of PyTorch Tensor Values')
+    #
+    # # Display the histogram
     # plt.show()
 
-    fig = plt.figure()
+    # grid_cells = grid_cells.reshape([grid_cells.shape[0] * grid_cells.shape[1] * grid_cells.shape[2], grid_cells.shape[3]])
+    grid_cells = grid_cells.detach().cpu().numpy()
 
-    ax1 = fig.add_subplot(121)
-    ax2 = fig.add_subplot(122)
-    fig.subplots_adjust(left=0.05, bottom=0.05, right=None, top=None, wspace=0.0, hspace=None)
-    for ax in fig.axes:
-        ax.xaxis.set_visible(False)
-        ax.yaxis.set_visible(False)
-    ax1.imshow(image)
-    ax2.imshow(image_gt)
-    fig.set_size_inches((8, 6))
-    plt.show()
+    # Get the indices of the non-zero depth values
+    grid_cells_coords = np.argwhere(grid_cells[..., -1] > 0)
 
-    np_array = grid_cells[..., -1].detach().flatten().cpu().numpy()
-    plt.hist(np_array, bins=900)
-    plt.xlabel('Value')
-    plt.ylabel('Frequency')
-    plt.title('Histogram of PyTorch Tensor Values')
+    # Extract the x, y, z coordinates and the RGB values
+    x = grid_cells_coords[:, 0]
+    y = grid_cells_coords[:, 1]
+    z = grid_cells_coords[:, 2]
+    rgb = grid_cells[x, y, z, :-1]
+    d = grid_cells[x, y, z, -1]
 
-    # Display the histogram
-    plt.show()
+    scatter = go.Scatter3d(
+        x=x,
+        y=y,
+        z=z,
+        mode='markers',
+        marker=dict(
+            size=2,
+            color=rgb,
+            opacity=0.8
+        )
+    )
+
+    # Create the plot layout
+    layout = go.Layout(
+        title='RGBD Scatter3d Visualization',
+        scene=dict(
+            xaxis=dict(title='X Axis'),
+            yaxis=dict(title='Y Axis'),
+            zaxis=dict(title='Z Axis'),
+        ),
+    )
+
+    # Create the plot figure
+    fig = go.Figure(data=scatter, layout=layout)
+
+    # Write the figure as an HTML file
+    pio.write_html(fig, file='plotly_visualization.html', auto_open=True)
 
     return
 
@@ -1034,5 +1060,5 @@ if __name__ == "__main__":
     printi("start")
     # fit()
     # main()
-    inference_test_voxels(grid_cells_path="grid_cells_trained.pth", transparency_threshold=0.05, imgindex=160, do_threshold=True)
+    inference_test_voxels(grid_cells_path="grid_cells_trained_256x256.pth", transparency_threshold=0.2, imgindex=160, do_threshold=True)
     printi("end")

@@ -624,7 +624,7 @@ def tv_loss(voxel_grid):
 
 def fit():
     device = "cuda"
-    number_of_rays = 900
+    number_of_rays = 16
     num_samples = 600  # 200
     delta_step = 0.0125
     even_spread = False
@@ -642,7 +642,7 @@ def fit():
     transform_matricies, file_paths, camera_angle_x = load_data(data)
     transform_matricies, imgs = transform_matricies.to(device), imgs.to(device)
 
-    transform_matricies, imgs = transform_matricies[[1, 33, 44, 55, 66, 77, 88, 99], ...], imgs[[1, 33, 44, 55, 66, 77, 88, 99], ...]
+    # transform_matricies, imgs = transform_matricies[[1, 33, 44, 55, 66, 77, 88, 99], ...], imgs[[1, 33, 44, 55, 66, 77, 88, 99], ...]
 
     grid_indices, grid_cells, meshgrid, grid_grid = get_grid(gridsize[0], gridsize[1], gridsize[2],
                                                              points_distance=points_distance, info_size=4,
@@ -1060,5 +1060,5 @@ if __name__ == "__main__":
     printi("start")
     # fit()
     # main()
-    inference_test_voxels(grid_cells_path="grid_cells_trained_256x256.pth", transparency_threshold=0.2, imgindex=160, do_threshold=True)
+    inference_test_voxels(grid_cells_path="grid_cells_trained.pth", transparency_threshold=0.2, imgindex=160, do_threshold=True)
     printi("end")

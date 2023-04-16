@@ -690,13 +690,13 @@ def fit():
 
         pixels_color = pixels_color.reshape([color_shape[0]*color_shape[1], color_shape[2]])
 
-        # sparsity_loss = 1000*torch.log(1 + 2 * ((nearest[..., -1])) ** 2).mean() # todo check if needed
-        # sparsity_loss = 100*(nearest[..., -1]).mean() # todo check if needed
-        # tvloss = 1000*tv_loss(grid_cells)
+        epsilon = 0.0001
+        sparsity_loss = 0.01*(torch.log(nearest[..., -1] + epsilon) + 0.01*torch.log(1 - nearest[..., -1]) + epsilon).mean() # todo check if needed
+        # tvloss = 10*tv_loss(grid_cells)
         tvloss = torch.tensor([0])
-        sparsity_loss = torch.tensor(0)
+        # sparsity_loss = torch.tensor(0)
         # l2_loss = 0#10*(grid_cells[:,:,:,-1]**2).mean()
-        loss = mse_loss(pixels_color, pixels_to_rays)# + sparsity_loss #+ tvloss
+        loss = mse_loss(pixels_color, pixels_to_rays) + sparsity_loss # + tvloss
 
         optimizer.zero_grad()
         loss.backward()
@@ -861,29 +861,29 @@ def inference_test_voxels(grid_cells_path="", transparency_threshold=0.2, imgind
     # # plt.imshow(image_gt)
     # # plt.show()
     #
-    # fig = plt.figure()
-    #
-    # ax1 = fig.add_subplot(121)
-    # ax2 = fig.add_subplot(122)
-    # fig.subplots_adjust(left=0.05, bottom=0.05, right=None, top=None, wspace=0.0, hspace=None)
-    # for ax in fig.axes:
-    #     ax.xaxis.set_visible(False)
-    #     ax.yaxis.set_visible(False)
-    # ax1.imshow(image)
-    # ax2.imshow(image_gt)
-    # fig.set_size_inches((8, 6))
-    # plt.show()
-    #
-    # np_array = grid_cells[..., -1].detach().flatten().cpu().numpy()
-    # plt.hist(np_array, bins=900)
-    # plt.xlabel('Value')
-    # plt.ylabel('Frequency')
-    # plt.title('Histogram of PyTorch Tensor Values')
-    #
-    # # Display the histogram
-    # plt.show()
+    fig = plt.figure()
 
-    # grid_cells = grid_cells.reshape([grid_cells.shape[0] * grid_cells.shape[1] * grid_cells.shape[2], grid_cells.shape[3]])
+    ax1 = fig.add_subplot(121)
+    ax2 = fig.add_subplot(122)
+    fig.subplots_adjust(left=0.05, bottom=0.05, right=None, top=None, wspace=0.0, hspace=None)
+    for ax in fig.axes:
+        ax.xaxis.set_visible(False)
+        ax.yaxis.set_visible(False)
+    ax1.imshow(image)
+    ax2.imshow(image_gt)
+    fig.set_size_inches((8, 6))
+    plt.show()
+
+    np_array = grid_cells[..., -1].detach().flatten().cpu().numpy()
+    plt.hist(np_array, bins=900)
+    plt.xlabel('Value')
+    plt.ylabel('Frequency')
+    plt.title('Histogram of PyTorch Tensor Values')
+
+    # Display the histogram
+    plt.show()
+
+    """
     grid_cells = grid_cells.detach().cpu().numpy()
 
     # Get the indices of the non-zero depth values
@@ -923,7 +923,7 @@ def inference_test_voxels(grid_cells_path="", transparency_threshold=0.2, imgind
 
     # Write the figure as an HTML file
     pio.write_html(fig, file='plotly_visualization.html', auto_open=True)
-
+    """
     return
 
 
@@ -1058,7 +1058,7 @@ def main():
 
 if __name__ == "__main__":
     printi("start")
-    # fit()
+    fit()
     # main()
-    inference_test_voxels(grid_cells_path="grid_cells_trained.pth", transparency_threshold=0.2, imgindex=160, do_threshold=True)
+    inference_test_voxels(grid_cells_path="grid_cells_trained.pth", transparency_threshold=0.1, imgindex=160, do_threshold=True)
     printi("end")

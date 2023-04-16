@@ -690,8 +690,9 @@ def fit():
 
         pixels_color = pixels_color.reshape([color_shape[0]*color_shape[1], color_shape[2]])
 
-        epsilon = 0.0001
-        sparsity_loss = 0.01*(torch.log(nearest[..., -1] + epsilon) + 0.01*torch.log(1 - nearest[..., -1]) + epsilon).mean() # todo check if needed
+        epsilon = 0.01
+        # epsilon = 0.0001
+        sparsity_loss = 0.01*(torch.log(nearest[..., -1] + epsilon) + torch.log(1 - nearest[..., -1] + epsilon)).mean() # todo check if needed
         # tvloss = 10*tv_loss(grid_cells)
         tvloss = torch.tensor([0])
         # sparsity_loss = torch.tensor(0)
@@ -1060,5 +1061,5 @@ if __name__ == "__main__":
     printi("start")
     fit()
     # main()
-    inference_test_voxels(grid_cells_path="grid_cells_trained.pth", transparency_threshold=0.1, imgindex=160, do_threshold=True)
+    inference_test_voxels(grid_cells_path="grid_cells_trained.pth", transparency_threshold=0.1, imgindex=160, do_threshold=False)
     printi("end")

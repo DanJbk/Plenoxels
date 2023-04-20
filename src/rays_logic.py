@@ -16,8 +16,10 @@ from mpl_toolkits.mplot3d import Axes3D
 from tqdm.auto import tqdm
 from torch.optim import SGD
 from torch.optim import Adam
+from torch.optim import RMSprop
 from torch.nn.functional import mse_loss
 from torch.optim.lr_scheduler import LambdaLR
+from torch.optim.lr_scheduler import LinearLR
 
 
 log_color = "\x1b[32;1m"
@@ -560,10 +562,6 @@ def collect_cell_information_via_indices(normalized_samples_for_indecies, B):
     output = B[idx1, idx2, idx3]
     return output, outofbounds
 
-
-
-
-
 def voxel_visulization(index, grid_grid, num_samples, number_of_rays, selected_points_voxels, samples_interval,
                        ray_directions):
     index0 = index * num_samples * number_of_rays
@@ -624,7 +622,7 @@ def tv_loss(voxel_grid):
 
 def fit():
     device = "cuda"
-    number_of_rays = 16
+    number_of_rays = 64
     num_samples = 600  # 200
     delta_step = 0.0125
     even_spread = False
@@ -632,12 +630,13 @@ def fit():
     points_distance = 0.0125  # *2*10
     gridsize = [256, 256, 256]
 
-    lr = 0.005
+    lr = 0.01
+    transperancy_lr = 0.0065
 
     # loading data and sending to device
     data_folder = r"D:\9.programming\Plenoxels\data"
     object_folders = ['chair', 'drums', 'ficus', 'hotdog', 'lego', 'materials', 'mic', 'ship']
-    object_folder = object_folders[0]
+    object_folder = object_folders[7]
     data, imgs = load_image_data(data_folder, object_folder, split="test")
     transform_matricies, file_paths, camera_angle_x = load_data(data)
     transform_matricies, imgs = transform_matricies.to(device), imgs.to(device)
@@ -648,21 +647,28 @@ def fit():
                                                              points_distance=points_distance, info_size=4,
                                                              device=device)
     with torch.no_grad():
-        grid_cells[:, :, :, :-1] = 1.0
+        original_grid_colors = torch.rand_like(grid_cells[:, :, :, :-1])
+        grid_cells[:, :, :, :-1] = original_grid_colors #1.0
 
-    # optimizer = SGD([grid_cells], lr=lr)
-    optimizer = Adam([grid_cells], lr=lr)
-    # lr_decay = lambda step: max(0.01, lr * 0.5 ** (step / 7500))
+    color_cells = grid_cells[:, :, :, :-1].clone().detach().requires_grad_(True)
+    transparency_cells = grid_cells[:, :, :, -1].clone().detach().requires_grad_(True)
+
+    optimizer = RMSprop([color_cells], lr=lr)
+    optimizer_transperancy = RMSprop([transparency_cells], lr=transperancy_lr)
+    lr_decay = lambda step : lr if step < 200 else lr / 4
     # lr_decay = lambda step: max(0.01, lr * 0.5 ** (step / 2500))
     # scheduler = LambdaLR(optimizer, lr_lambda=lr_decay)
+    # scheduler = LinearLR(optimizer, start_factor=0.9, total_iters=400, verbose=True)
 
-    steps = 1500
+    steps = 500
     loss_hist = []
     sparsity_loss_hist = []
     tv_loss_hist = []
 
     pbar = tqdm(total=steps, desc="Processing items")
     for i in range(steps):
+
+        grid_cells = torch.cat((color_cells, transparency_cells.unsqueeze(-1)), dim=-1)
 
         # generate samples
         samples_interval, pixels_to_rays, camera_positions, ray_directions = sample_camera_rays_batched(
@@ -690,26 +696,33 @@ def fit():
 
         pixels_color = pixels_color.reshape([color_shape[0]*color_shape[1], color_shape[2]])
 
-        epsilon = 0.01
+        epsilon = 0.0001
         # epsilon = 0.0001
-        sparsity_loss = 0.01*(torch.log(nearest[..., -1] + epsilon) + torch.log(1 - nearest[..., -1] + epsilon)).mean() # todo check if needed
+        sparsity_loss = 0.005*(torch.log(nearest[..., -1] + epsilon) + torch.log(1 - nearest[..., -1] + epsilon)).mean() # todo check if needed
         # tvloss = 10*tv_loss(grid_cells)
         tvloss = torch.tensor([0])
         # sparsity_loss = torch.tensor(0)
         # l2_loss = 0#10*(grid_cells[:,:,:,-1]**2).mean()
-        loss = mse_loss(pixels_color, pixels_to_rays) + sparsity_loss # + tvloss
+        mseloss = mse_loss(pixels_color, pixels_to_rays)
+        loss = mseloss + sparsity_loss # + tvloss
 
         optimizer.zero_grad()
+        optimizer_transperancy.zero_grad()
+
         loss.backward()
+
         optimizer.step()
-        # scheduler.step()
+        optimizer_transperancy.step()
+        # if i > 300:
+        #     scheduler.step()
 
         with torch.no_grad():
-            grid_cells.clamp_(min=0, max=1)
+            color_cells.clamp_(min=0, max=1)
+            transparency_cells.clamp_(min=0, max=1)
 
         # print(grid_cells.grad.min())
 
-        loss_detached = loss.cpu().detach()
+        loss_detached = mseloss.cpu().detach()
         sparsity_loss_detached = sparsity_loss.detach().cpu()
         tvloss_detached = tvloss.detach().cpu()
         loss_hist.append(loss_detached)
@@ -719,6 +732,9 @@ def fit():
         pbar.update(1)
 
         pbar.set_description(f"loss:{loss_detached} sparcity: {sparsity_loss_detached} tv: {tvloss_detached}")
+
+    with torch.no_grad():
+        pixel_color_differences = torch.abs(original_grid_colors - grid_cells[:, :, :, :-1]).mean(3).detach().cpu()
 
     torch.save({
         "grid": grid_cells,
@@ -731,6 +747,7 @@ def fit():
             "camera_ray": camera_ray,
             "points_distance": points_distance,
             "gridsize": gridsize,
+            "color_difference": pixel_color_differences,
         },
     }, "grid_cells_trained.pth")
 
@@ -760,6 +777,18 @@ def fit():
     plt.plot(sparsity_loss_hist)
     plt.show()
 
+
+
+    plt.hist(pixel_color_differences.flatten().numpy(), bins=900)
+    plt.xlabel('Value')
+    plt.ylabel('Frequency')
+    plt.title('Histogram of color differences Values')
+
+    # Display the histogram
+    plt.show()
+
+
+
     return
 
 
@@ -787,7 +816,7 @@ def inference_test_voxels(grid_cells_path="", transparency_threshold=0.2, imgind
     # loading data
     data_folder = r"D:\9.programming\Plenoxels\data"
     object_folders = ['chair', 'drums', 'ficus', 'hotdog', 'lego', 'materials', 'mic', 'ship']
-    object_folder = object_folders[0]
+    object_folder = object_folders[7]
     data, imgs = load_image_data(data_folder, object_folder, split="test")
     transform_matricies, file_paths, camera_angle_x = load_data(data)
 
@@ -798,7 +827,9 @@ def inference_test_voxels(grid_cells_path="", transparency_threshold=0.2, imgind
                                                              points_distance=points_distance, info_size=4, device=device)
 
     if len(grid_cells_path) > 0:
-        grid_cells = torch.load(grid_cells_path)["grid"].to(device)
+        grid_cells_data = torch.load(grid_cells_path)
+        grid_cells = grid_cells_data["grid"].to(device)
+        color_difference = grid_cells_data["param"]["color_difference"].to(device)
         print(grid_cells.min(), grid_cells.max(), grid_cells.mean(), grid_cells.std())
         # grid_cells = grid_cells * (1/(grid_cells.mean()))
         # print(grid_cells.min(), grid_cells.max())
@@ -807,7 +838,11 @@ def inference_test_voxels(grid_cells_path="", transparency_threshold=0.2, imgind
             alphas = grid_cells[..., -1]
             alphas[alphas < transparency_threshold] = 0.0
             # alphas[alphas > transparency_threshold] = 1.0
-        # grid_cells[..., -1] = alphas
+
+            # alphas = color_difference
+            # alphas[alphas < transparency_threshold] =  0.0
+            # alphas[alphas >= transparency_threshold] = 1.0
+            # grid_cells[..., -1].mul_(alphas)
 
     # choose an image to process
     img_index = imgindex #26#155 #45
@@ -884,7 +919,7 @@ def inference_test_voxels(grid_cells_path="", transparency_threshold=0.2, imgind
     # Display the histogram
     plt.show()
 
-    """
+
     grid_cells = grid_cells.detach().cpu().numpy()
 
     # Get the indices of the non-zero depth values
@@ -905,7 +940,7 @@ def inference_test_voxels(grid_cells_path="", transparency_threshold=0.2, imgind
         marker=dict(
             size=2,
             color=rgb,
-            opacity=0.8
+            opacity=1.0
         )
     )
 
@@ -924,7 +959,7 @@ def inference_test_voxels(grid_cells_path="", transparency_threshold=0.2, imgind
 
     # Write the figure as an HTML file
     pio.write_html(fig, file='plotly_visualization.html', auto_open=True)
-    """
+
     return
 
 
@@ -1059,7 +1094,7 @@ def main():
 
 if __name__ == "__main__":
     printi("start")
-    fit()
+    # fit()
     # main()
-    inference_test_voxels(grid_cells_path="grid_cells_trained.pth", transparency_threshold=0.1, imgindex=160, do_threshold=False)
+    inference_test_voxels(grid_cells_path="grid_cells_trained.pth", transparency_threshold=0.125, imgindex=160, do_threshold=True)
     printi("end")

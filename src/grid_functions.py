@@ -1,17 +1,16 @@
 import torch
 import numpy as np
 
-from src.utils import batched_cartesian_prod, tensor_linspace
-
 
 def trilinear_interpolation(normalized_samples_for_indecies, selected_points, grid_cells):
     """
     The input tensors:
         :param    normalized_samples_for_indecies has a shape of (N, 3), which represents N 3D points.
-        :param    selected_points has a shape of (N, 8, 3), which represents 8 corner points for each of the N 3D points.
-        :param    grid_cells has a shape of (X, Y, Z, 3), which represents a 3D grid with XxYxZ cells, where each cell has a 3D value associated with it.
+        :param    selected_points has a shape (N, 8, 3), which represents 8 corner points for each of the N 3D points.
+        :param    grid_cells has a shape (X, Y, Z, 3), which represents a 3D grid with XxYxZ cells,
+        where each cell has a 3D value associated with it.
 
-    selected_points is of this form:
+    selected_points are of this form:
         [['ceil_x', 'ceil_y', 'ceil_z'],
          ['ceil_x', 'ceil_y', 'floor_z'],
          ['ceil_x', 'floor_y', 'ceil_z'],
@@ -22,16 +21,19 @@ def trilinear_interpolation(normalized_samples_for_indecies, selected_points, gr
          ['floor_x', 'floor_y', 'floor_z']]
 
     1. selection0 and selection1:
-        These two tensors are created by reshaping the last 4 and first 4 corner points of each cell in selected_points, respectively.
+        These two tensors are created by reshaping the last 4 and first 4 corner points of each cell in selected_points,
+        respectively.
         Then, they extract the values from grid_cells corresponding to these corner points.
 
     2. interpolation_frac_step1:
         This tensor represents the interpolation fraction for the first dimension.
-        The code multiplies selection1 by this fraction and selection0 by its complement (1 - fraction) and adds them together, yielding newstep.
+        The code multiplies selection1 by this fraction and selection0 by its complement (1 - fraction) and adds them
+        together, yielding newstep.
 
     3. inteplation_frac_step2:
         This tensor represents the interpolation fraction for the second dimension.
-        The code performs interpolation for the second dimension using the values computed in step 3 and updates newstep.
+        The code performs interpolation for the second dimension using the values computed in step 3 and updates
+        newstep.
 
     4. inteplation_frac_step3:
         This tensor represents the interpolation fraction for the third dimension.
@@ -133,7 +135,8 @@ def get_grid_points_indices(normalized_samples_for_indecies):
 
 
 def get_grid(sx, sy, sz, points_distance=0.5, info_size=4, device="cuda"):
-    grindx_indices, grindy_indices, grindz_indices = torch.arange(sx, device=device), torch.arange(sy, device=device), torch.arange(sz, device=device)
+    grindx_indices, grindy_indices, grindz_indices = torch.arange(sx, device=device), torch.arange(sy, device=device), \
+        torch.arange(sz, device=device)
     coordsx, coordsy, coordsz = torch.meshgrid(grindx_indices, grindy_indices, grindz_indices, indexing='ij')
 
     meshgrid = torch.stack([coordsx, coordsy, coordsz], dim=-1)
@@ -155,5 +158,3 @@ def get_grid(sx, sy, sz, points_distance=0.5, info_size=4, device="cuda"):
                              requires_grad=True, device=device)
 
     return grid_coords, grid_cells, meshgrid, grid_grid
-
-

@@ -38,15 +38,9 @@ def visualize_rays_3d(ray_directions, camera_positions, red=None, green=None, or
 
         # Plot 3D vectors
         for i in (range(ray_directions.shape[0])):
-            if (i - 8) % 9 == 0:
-
-                ax.quiver(origin_x[i], origin_y[i], origin_z[i],
-                          ray_directions[i, 0], ray_directions[i, 1], ray_directions[i, 2],
-                          color='r', alpha=0.5)
-            else:
-                ax.quiver(origin_x[i], origin_y[i], origin_z[i],
-                          ray_directions[i, 0], ray_directions[i, 1], ray_directions[i, 2],
-                          color='b', alpha=0.5)
+            ax.quiver(origin_x[i], origin_y[i], origin_z[i],
+                      ray_directions[i, 0], ray_directions[i, 1], ray_directions[i, 2],
+                      color='b', alpha=0.5)
 
     for item, color in zip([red, green, orange], ['r', 'g', 'orange']):
         if not item is None:
@@ -110,6 +104,7 @@ def visualize_rays_3d_plotly(ray_directions, camera_positions, red=None, green=N
 
     # fig.show()
 
+
 def voxel_visulization(index, grid_grid, num_samples, number_of_rays, selected_points_voxels, samples_interval,
                        ray_directions):
     index0 = index * num_samples * number_of_rays
@@ -120,6 +115,17 @@ def voxel_visulization(index, grid_grid, num_samples, number_of_rays, selected_p
     temp2 = samples_interval[
             index * num_samples * number_of_rays: index * num_samples * number_of_rays + num_samples * number_of_rays]
     visualize_rays_3d_plotly(ray_directions, [], temp, temp2)
+
+
+def view_opacity_histogram(grid_cells):
+    np_array = grid_cells[..., -1].detach().flatten().cpu().numpy()
+    plt.hist(np_array, bins=900)
+    plt.xlabel('Value')
+    plt.ylabel('Frequency')
+    plt.title('Histogram of PyTorch Tensor Values')
+
+    # Display the histogram
+    plt.show()
 
 
 def paper_visulization(index, grid_grid, num_samples, number_of_rays, selected_points, samples_interval,

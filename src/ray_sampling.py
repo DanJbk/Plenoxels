@@ -4,6 +4,7 @@ import numpy as np
 from src.data_processing import get_data_from_index
 from src.utils import tensor_linspace, batched_cartesian_prod
 
+
 def get_camera_normal(transform_matrix):
     fixed_pos = transform_matrix[:3, :3].unsqueeze(0)
     fixed_pos[:, 2] = fixed_pos[:, 2] * -1
@@ -49,6 +50,29 @@ def generate_rays(num_rays, transform_matrix, camera_angle_x, even_spread=False)
     return ray_directions
 
 
+def compute_alpha_weighted_pixels(samples):
+    """
+
+    :param samples: a tensor of size [Number of cameras, number of rays, number of samples along the rays]
+    :return: a tensor of size [Number of cameras, number of rays,]
+    compute the color of a pixel given the alphas of the grid
+    """
+
+    # compute sample weight using the alpha channels;
+    alpha = samples[..., -1]
+    padded_nearest_alpha = torch.cat([torch.zeros_like(alpha[..., :1]), alpha], dim=2)
+    cumprod = (1 - padded_nearest_alpha[..., :-1]).cumprod(dim=2)
+    weights = (alpha * cumprod).unsqueeze(-1)
+
+    # multiply the weights by the color channels and sum, do the same to get the final alphas
+    samples = (samples[..., :-1] * weights).sum(2)
+    final_alpha = weights.sum(dim=2)
+
+    # Combine the pixel colors and final alpha values
+    res = torch.cat([samples, final_alpha], dim=2)
+    return res
+
+
 def sample_camera_rays(data, number_of_rays, num_samples, delta_step, even_spread, camera_ray):
     if even_spread:
         number_of_rays = int(np.round(np.sqrt(number_of_rays)) ** 2)
@@ -92,7 +116,7 @@ def generate_rays_batched(imgs, number_of_rays, transform_matricies, camera_angl
             transform_matricies (torch.Tensor): Transformation matrices for cameras (B, 4, 4).
             camera_angle_x (float): Horizontal field of view of the camera.
             device (str, optional): Device to use for computation. Defaults to 'cpu'.
-            even_spread (bool, optional): Whether to generate rays with even spacing. Defaults to False (random spacing).
+            even_spread (bool): Whether to generate rays with even spacing. Defaults to False (random spacing).
 
         Returns:
             torch.Tensor: Generated ray directions (B * number_of_rays, 3).
@@ -117,7 +141,7 @@ def generate_rays_batched(imgs, number_of_rays, transform_matricies, camera_angl
         # Compute evenly spaced u and v values for rays
         start = torch.tensor([-0.5 * camera_angle_x], device=device).repeat(aspect_ratio.shape)
         u_values = torch.linspace(-0.5 * camera_angle_x, 0.5 * camera_angle_x, int(num_rays_sqrt),
-                                  device=device).unsqueeze(0).repeat( [aspect_ratio.shape[0], 1])
+                                  device=device).unsqueeze(0).repeat([aspect_ratio.shape[0], 1])
         v_values = -tensor_linspace(start / aspect_ratio, -start / aspect_ratio, int(num_rays_sqrt), device=device)
 
         # Calculate ray indices using Cartesian product
@@ -187,8 +211,8 @@ def sample_camera_rays_batched(transform_matricies, camera_angle_x, imgs, number
     current_ray_directions = current_ray_directions
     camera_positions = transform_matricies[:, :3, 3]
 
-    delta_forsamples = delta_step * torch.arange(num_samples + 1, device=device)[1:].repeat(number_of_rays * imgs.shape[0]) \
-        .unsqueeze(1)
+    delta_forsamples = delta_step * torch.arange(num_samples + 1, device=device)[1:].repeat(number_of_rays *
+                                                                                            imgs.shape[0]).unsqueeze(1)
 
     camera_positions_forsamples = torch.repeat_interleave(camera_positions, num_samples * number_of_rays, 0)
 

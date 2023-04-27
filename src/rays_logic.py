@@ -24,7 +24,7 @@ from torch.optim.lr_scheduler import LinearLR
 from src.data_processing import load_image_data, load_data
 from src.grid_functions import get_grid, get_nearest_voxels, collect_cell_information_via_indices
 from src.ray_sampling import sample_camera_rays_batched, normalize_samples_for_indecies
-from src.visualization import paper_visulization, visualize_rays_3d
+from src.visualization import paper_visulization, visualize_rays_3d, voxel_visulization
 
 log_color = "\x1b[32;1m"
 logging.basicConfig(level=logging.INFO, format=f'{log_color}%(asctime)s - %(message)s')
@@ -67,7 +67,7 @@ def tv_loss(voxel_grid):
 def fit():
     device = "cuda"
     number_of_rays = 128
-    num_samples = 700  # 200
+    num_samples = 600  # 200
     delta_step = 0.0125
     even_spread = False
     camera_ray = False
@@ -79,12 +79,12 @@ def fit():
     # loading data and sending to device
     data_folder = r"D:\9.programming\Plenoxels\data"
     object_folders = ['chair', 'drums', 'ficus', 'hotdog', 'lego', 'materials', 'mic', 'ship']
-    object_folder = object_folders[7]
+    object_folder = object_folders[0]
     data, imgs = load_image_data(data_folder, object_folder, split="train")
     transform_matricies, file_paths, camera_angle_x = load_data(data)
     transform_matricies, imgs = transform_matricies.to(device), imgs.to(device)
 
-    # transform_matricies, imgs = transform_matricies[[1, 33, 44, 55, 66, 77, 88, 99], ...], imgs[[1, 33, 44, 55, 66, 77, 88, 99], ...]
+    # transform_matricies, imgs = transform_matricies[[10, 20, 30, 40, 50, 60, 70, 80], ...], imgs[[10, 20, 30, 40, 50, 60, 70, 80], ...]
 
     grid_indices, grid_cells, meshgrid, grid_grid = get_grid(gridsize[0], gridsize[1], gridsize[2],
                                                              points_distance=points_distance, info_size=4,
@@ -101,7 +101,7 @@ def fit():
     # scheduler = LambdaLR(optimizer, lr_lambda=lr_decay)
     # scheduler = LinearLR(optimizer, start_factor=0.9, total_iters=400, verbose=True)
 
-    steps = 1500
+    steps = 500
     loss_hist = []
     sparsity_loss_hist = []
     tv_loss_hist = []
@@ -181,7 +181,7 @@ def fit():
     #     pixel_color_differences = torch.abs(original_grid_colors - grid_cells[:, :, :, :-1]).mean(3).detach().cpu()
 
     torch.save({
-        "grid": grid_cells,
+        "grid": grid_cells.detach().cpu(),
         "param": {
             "device": device,
             "number_of_rays": number_of_rays,
@@ -244,7 +244,7 @@ def inference_test_voxels(grid_cells_path="", transparency_threshold=0.2, imgind
     # loading data
     data_folder = r"D:\9.programming\Plenoxels\data"
     object_folders = ['chair', 'drums', 'ficus', 'hotdog', 'lego', 'materials', 'mic', 'ship']
-    object_folder = object_folders[7]
+    object_folder = object_folders[0]
     data, imgs = load_image_data(data_folder, object_folder, split="test")
     transform_matricies, file_paths, camera_angle_x = load_data(data)
 
@@ -530,8 +530,8 @@ def main():
 
 if __name__ == "__main__":
     printi("start")
-    # fit()
+    fit()
     main()
-    # inference_test_voxels(grid_cells_path="grid_cells_trained.pth", transparency_threshold=0.2, imgindex=160,
-    #                       do_threshold=True)
+    inference_test_voxels(grid_cells_path="grid_cells_trained.pth", transparency_threshold=0.1, imgindex=160,
+                          do_threshold=True)
     printi("end")

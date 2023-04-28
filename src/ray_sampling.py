@@ -16,6 +16,16 @@ def normalize_samples_for_indecies(grid_indices, samples_interval, points_distan
 
 
 def generate_rays(num_rays, transform_matrix, camera_angle_x, even_spread=False):
+    """
+    Generates rays originating from the camera with the specified number of rays, transform matrix, and camera angle.
+    :param num_rays: Number of rays to generate.
+    :param transform_matrix: The 4x4 camera transformation matrix.
+    :param camera_angle_x: The camera's horizontal field of view angle.
+    :param even_spread: If True, generates rays with an even spread. If False, generates random rays.
+    :return: A tensor of shape (num_rays, 3) containing the generated ray directions.
+    """
+
+
     # Extract camera axes and position
     camera_x_axis = transform_matrix[:3, 0]
     camera_y_axis = transform_matrix[:3, 1]
@@ -50,30 +60,17 @@ def generate_rays(num_rays, transform_matrix, camera_angle_x, even_spread=False)
     return ray_directions
 
 
-def compute_alpha_weighted_pixels(samples):
-    """
-
-    :param samples: a tensor of size [Number of cameras, number of rays, number of samples along the rays]
-    :return: a tensor of size [Number of cameras, number of rays,]
-    compute the color of a pixel given the alphas of the grid
-    """
-
-    # compute sample weight using the alpha channels;
-    alpha = samples[..., -1]
-    padded_nearest_alpha = torch.cat([torch.zeros_like(alpha[..., :1]), alpha], dim=2)
-    cumprod = (1 - padded_nearest_alpha[..., :-1]).cumprod(dim=2)
-    weights = (alpha * cumprod).unsqueeze(-1)
-
-    # multiply the weights by the color channels and sum, do the same to get the final alphas
-    samples = (samples[..., :-1] * weights).sum(2)
-    final_alpha = weights.sum(dim=2)
-
-    # Combine the pixel colors and final alpha values
-    res = torch.cat([samples, final_alpha], dim=2)
-    return res
-
-
 def sample_camera_rays(data, number_of_rays, num_samples, delta_step, even_spread, camera_ray):
+    """
+    Samples camera rays based on the input data.
+    :param data: The input data containing camera information.
+    :param number_of_rays: Number of rays to generate for each camera.
+    :param num_samples: Number of samples to take along each ray.
+    :param delta_step: The step size along the ray.
+    :param even_spread: If True, generates rays with an even spread. If False, generates random rays.
+    :param camera_ray: If True, generates rays directly opposite the camera's forward direction.
+    :return: A tuple containing the tensors for samples interval, camera positions, and ray directions.
+    """
     if even_spread:
         number_of_rays = int(np.round(np.sqrt(number_of_rays)) ** 2)
 
@@ -104,6 +101,74 @@ def sample_camera_rays(data, number_of_rays, num_samples, delta_step, even_sprea
     samples_interval = camera_positions_forsamples + ray_directions_forsamples * delta_forsamples
 
     return samples_interval, camera_positions, ray_directions
+
+
+def sample_camera_rays_batched(transform_matrices, camera_angle_x, imgs, number_of_rays, num_samples, delta_step,
+                               even_spread, camera_ray, device='cuda'):
+    """
+    Samples camera rays in a batched manner based on the input data.
+    :param transform_matrices: a tensor of Camera_numberx4x4 camera transformation matrices.
+    :param camera_angle_x: The camera's horizontal field of view angle.
+    :param imgs: Batch of images corresponding to the input data.
+    :param number_of_rays: Number of rays to generate for each camera.
+    :param num_samples: Number of samples to take along each ray.
+    :param delta_step: The step size along the ray.
+    :param even_spread: If True, generates rays with an even spread. If False, generates random rays.
+    :param camera_ray: If True, generates rays directly opposite the camera's forward direction.
+    :param device: Device on which the tensors should be created (default='cuda').
+    :return: A tuple containing the tensors for samples interval, pixels to rays mapping, camera positions,
+    and current ray directions.
+    """
+    if even_spread:
+        number_of_rays = int(np.round(np.sqrt(number_of_rays)) ** 2)
+
+    # transform_matricies, file_paths, camera_angle_x = load_data(data)
+
+    pixels_to_rays = []
+    if camera_ray:
+        current_ray_directions = transform_matrices[:, :3, 2].unsqueeze(0) * -1
+
+    else:
+        current_ray_directions, pixels_to_rays = generate_rays_batched(imgs, number_of_rays, transform_matrices,
+                                                                       camera_angle_x,
+                                                                       even_spread=even_spread, device=device)
+
+    # Move tensors to specified device
+    current_ray_directions = current_ray_directions
+    camera_positions = transform_matrices[:, :3, 3]
+
+    delta_forsamples = delta_step * torch.arange(num_samples + 1, device=device)[1:].repeat(number_of_rays *
+                                                                                            imgs.shape[0]).unsqueeze(1)
+
+    camera_positions_forsamples = torch.repeat_interleave(camera_positions, num_samples * number_of_rays, 0)
+
+    ray_directions_for_samples = torch.repeat_interleave(current_ray_directions, num_samples, 0)
+    samples_interval = camera_positions_forsamples + ray_directions_for_samples * delta_forsamples
+
+    return samples_interval, pixels_to_rays, camera_positions, current_ray_directions
+
+
+def compute_alpha_weighted_pixels(samples):
+    """
+
+    :param samples: a tensor of size [Number of cameras, number of rays, number of samples along the rays]
+    :return: a tensor of size [Number of cameras, number of rays,]
+    compute the color of a pixel given the alphas of the grid
+    """
+
+    # compute sample weight using the alpha channels;
+    alpha = samples[..., -1]
+    padded_nearest_alpha = torch.cat([torch.zeros_like(alpha[..., :1]), alpha], dim=2)
+    cumprod = (1 - padded_nearest_alpha[..., :-1]).cumprod(dim=2)
+    weights = (alpha * cumprod).unsqueeze(-1)
+
+    # multiply the weights by the color channels and sum, do the same to get the final alphas
+    samples = (samples[..., :-1] * weights).sum(2)
+    final_alpha = weights.sum(dim=2)
+
+    # Combine the pixel colors and final alpha values
+    res = torch.cat([samples, final_alpha], dim=2)
+    return res
 
 
 def generate_rays_batched(imgs, number_of_rays, transform_matricies, camera_angle_x, even_spread=False, device='cuda'):
@@ -191,32 +256,4 @@ def generate_rays_batched(imgs, number_of_rays, transform_matricies, camera_angl
     return ray_directions.reshape(ray_directions.shape[0] * number_of_rays, -1), pixels_to_rays
 
 
-def sample_camera_rays_batched(transform_matricies, camera_angle_x, imgs, number_of_rays, num_samples, delta_step,
-                               even_spread, camera_ray, device='cuda'):
-    if even_spread:
-        number_of_rays = int(np.round(np.sqrt(number_of_rays)) ** 2)
 
-    # transform_matricies, file_paths, camera_angle_x = load_data(data)
-
-    pixels_to_rays = []
-    if camera_ray:
-        current_ray_directions = transform_matricies[:, :3, 2].unsqueeze(0) * -1
-
-    else:
-        current_ray_directions, pixels_to_rays = generate_rays_batched(imgs, number_of_rays, transform_matricies,
-                                                                       camera_angle_x,
-                                                                       even_spread=even_spread, device=device)
-
-    # Move tensors to specified device
-    current_ray_directions = current_ray_directions
-    camera_positions = transform_matricies[:, :3, 3]
-
-    delta_forsamples = delta_step * torch.arange(num_samples + 1, device=device)[1:].repeat(number_of_rays *
-                                                                                            imgs.shape[0]).unsqueeze(1)
-
-    camera_positions_forsamples = torch.repeat_interleave(camera_positions, num_samples * number_of_rays, 0)
-
-    ray_directions_for_samples = torch.repeat_interleave(current_ray_directions, num_samples, 0)
-    samples_interval = camera_positions_forsamples + ray_directions_for_samples * delta_forsamples
-
-    return samples_interval, pixels_to_rays, camera_positions, current_ray_directions

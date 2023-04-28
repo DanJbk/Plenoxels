@@ -2,7 +2,7 @@
 from src.data_processing import load_data, load_image_data_from_path
 from src.ray_sampling import sample_camera_rays_batched
 from src.visualization import visualize_rays_3d
-from src.grid_functions import get_grid
+from src.grid_functions import generate_grid
 
 import argparse
 import torch
@@ -34,7 +34,7 @@ def view_grid_cameras(path, transform_path, gridsize, points_distance, device):
     transform_matrices, imgs = transform_matrices.to(device), imgs.to(device)
 
     samples_interval, pixels_to_rays, camera_positions, ray_directions = sample_camera_rays_batched(
-        transform_matricies=transform_matrices,
+        transform_matrices=transform_matrices,
         camera_angle_x=camera_angle_x,
         imgs=imgs,
         number_of_rays=number_of_rays,
@@ -44,9 +44,9 @@ def view_grid_cameras(path, transform_path, gridsize, points_distance, device):
         camera_ray=False,
         device=device
     )
-    grid_indices, grid_cells, meshgrid, grid_grid = get_grid(gridsize[0], gridsize[1], gridsize[2],
-                                                             points_distance=points_distance, info_size=4,
-                                                             device=device)
+    grid_indices, grid_cells, meshgrid, grid_grid = generate_grid(gridsize[0], gridsize[1], gridsize[2],
+                                                                  points_distance=points_distance, info_size=4,
+                                                                  device=device)
     ray_positions = torch.repeat_interleave(camera_positions, number_of_rays, 0)
 
     if any(map(lambda x: x >= 8, gridsize)):

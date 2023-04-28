@@ -5,4 +5,8 @@
     <orderEntry type="jdk" jdkName="D:\9.programming\anaconda\envs\plenoxels" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
+  <component name="PackageRequirementsSettings">
+    <option name="versionSpecifier" value="Strong equality (==x.y.z)" />
+    <option name="keepMatchingSpecifier" value="false" />
+  </component>
 </module>

@@ -22,7 +22,8 @@ from torch.optim.lr_scheduler import LambdaLR
 from torch.optim.lr_scheduler import LinearLR
 
 from src.data_processing import load_image_data, load_data
-from src.grid_functions import get_grid, get_nearest_voxels, collect_cell_information_via_indices
+from src.grid_functions import generate_grid, get_nearest_voxels, collect_cell_information_via_indices, \
+    trilinear_interpolation
 from src.ray_sampling import sample_camera_rays_batched, normalize_samples_for_indecies
 from src.visualization import paper_visulization, visualize_rays_3d, voxel_visulization
 
@@ -86,9 +87,9 @@ def fit():
 
     # transform_matricies, imgs = transform_matricies[[10, 20, 30, 40, 50, 60, 70, 80], ...], imgs[[10, 20, 30, 40, 50, 60, 70, 80], ...]
 
-    grid_indices, grid_cells, meshgrid, grid_grid = get_grid(gridsize[0], gridsize[1], gridsize[2],
-                                                             points_distance=points_distance, info_size=4,
-                                                             device=device)
+    grid_indices, grid_cells, meshgrid, grid_grid = generate_grid(gridsize[0], gridsize[1], gridsize[2],
+                                                                  points_distance=points_distance, info_size=4,
+                                                                  device=device)
     with torch.no_grad():
         original_grid_colors = torch.rand_like(grid_cells[:, :, :, :-1])
         grid_cells[:, :, :, :-1] = original_grid_colors
@@ -112,7 +113,7 @@ def fit():
     for i in range(steps):
         # generate samples
         samples_interval, pixels_to_rays, camera_positions, ray_directions = sample_camera_rays_batched(
-            transform_matricies=transform_matricies,
+            transform_matrices=transform_matricies,
             camera_angle_x=camera_angle_x,
             imgs=imgs,
             number_of_rays=number_of_rays,
@@ -222,24 +223,24 @@ def fit():
 
 
 def inference_test_voxels(grid_cells_path="", transparency_threshold=0.2, imgindex=26, do_threshold=False):
-    # parameters
-    # device = "cuda"
-    # number_of_rays = 2500
-    # num_samples = 600
-    # delta_step = 0.01
-    # even_spread = False
-    # camera_ray = False
-    # points_distance = 0.5  # *2*10
-    # gridsize = [5, 5, 5]  # 64
-
+    parameters
     device = "cuda"
-    number_of_rays = 40000
-    num_samples = 600  # 200
-    delta_step = 0.0120
-    even_spread = True
+    number_of_rays = 2500
+    num_samples = 600
+    delta_step = 0.01
+    even_spread = False
     camera_ray = False
-    points_distance = 0.0125  # *2*10
-    gridsize = [256, 256, 256]
+    points_distance = 0.5  # *2*10
+    gridsize = [5, 5, 5]  # 64
+
+    # device = "cuda"
+    # number_of_rays = 40000
+    # num_samples = 600  # 200
+    # delta_step = 0.0120
+    # even_spread = True
+    # camera_ray = False
+    # points_distance = 0.0125  # *2*10
+    # gridsize = [256, 256, 256]
 
     # loading data
     data_folder = r"D:\9.programming\Plenoxels\data"
@@ -251,9 +252,9 @@ def inference_test_voxels(grid_cells_path="", transparency_threshold=0.2, imgind
     transform_matricies, imgs = transform_matricies.to(device), imgs.to(device)
 
     # generate grid
-    grid_indices, grid_cells, meshgrid, grid_grid = get_grid(gridsize[0], gridsize[1], gridsize[2],
-                                                             points_distance=points_distance, info_size=4,
-                                                             device=device)
+    grid_indices, grid_cells, meshgrid, grid_grid = generate_grid(gridsize[0], gridsize[1], gridsize[2],
+                                                                  points_distance=points_distance, info_size=4,
+                                                                  device=device)
 
     if len(grid_cells_path) > 0:
         grid_cells_data = torch.load(grid_cells_path)
@@ -282,7 +283,7 @@ def inference_test_voxels(grid_cells_path="", transparency_threshold=0.2, imgind
     # generate samples
     t0 = time.time()
     samples_interval, pixels_to_rays, camera_positions, ray_directions = sample_camera_rays_batched(
-        transform_matricies=transform_matricies,
+        transform_matrices=transform_matricies,
         camera_angle_x=camera_angle_x,
         imgs=imgs,
         number_of_rays=number_of_rays,
@@ -301,10 +302,10 @@ def inference_test_voxels(grid_cells_path="", transparency_threshold=0.2, imgind
     nearest = nearest * mask.unsqueeze(-1)  # zero the samples landing outside the grid
 
     # -- interpolate 8 closest points --
-    # selected_points, mask = collect_cell_information_via_indices(normalized_samples_for_indecies, meshgrid)
-    # selected_points = selected_points.reshape([int(selected_points.shape[0] / 8), 8, 3])
-    # nearest = trilinear_interpolation(normalized_samples_for_indecies, selected_points, grid_cells)
-    # nearest = nearest * mask.unsqueeze(-1)
+    selected_points, mask = collect_cell_information_via_indices(normalized_samples_for_indecies, meshgrid)
+    selected_points = selected_points.reshape([int(selected_points.shape[0] / 8), 8, 3])
+    nearest = trilinear_interpolation(normalized_samples_for_indecies, selected_points, grid_cells)
+    nearest = nearest * mask.unsqueeze(-1)
 
     # find pixels color
     nearest = nearest.reshape(1, number_of_rays, num_samples, 4)
@@ -454,9 +455,9 @@ def main():
     object_folder = object_folders[0]
     data, imgs = load_image_data(data_folder, object_folder)
 
-    grid_indices, grid_cells, meshgrid, grid_grid = get_grid(gridsize[0], gridsize[1], gridsize[2],
-                                                             points_distance=points_distance, info_size=4,
-                                                             device=device)
+    grid_indices, grid_cells, meshgrid, grid_grid = generate_grid(gridsize[0], gridsize[1], gridsize[2],
+                                                                  points_distance=points_distance, info_size=4,
+                                                                  device=device)
 
     transform_matricies, file_paths, camera_angle_x = load_data(data)
 
@@ -465,7 +466,7 @@ def main():
 
     t0 = time.time()
     samples_interval, pixels_to_rays, camera_positions, ray_directions = sample_camera_rays_batched(
-        transform_matricies=transform_matricies,
+        transform_matrices=transform_matricies,
         camera_angle_x=camera_angle_x,
         imgs=imgs,
         number_of_rays=number_of_rays,
@@ -502,18 +503,18 @@ def main():
 
 
     # -- visulize grid around sampled points of ray
-    # index = 5
-    # selected_points, mask = collect_cell_information_via_indices(normalized_samples_for_indecies, meshgrid)
-    # selected_points = selected_points.reshape([int(selected_points.shape[0] / 8), 8, 3])
+    index = 5
+    selected_points, mask = collect_cell_information_via_indices(normalized_samples_for_indecies, meshgrid)
+    selected_points = selected_points.reshape([int(selected_points.shape[0] / 8), 8, 3])
+
+    grid_grid = grid_grid.to("cpu")
+    selected_points = selected_points.to("cpu")
+    samples_interval = samples_interval.to("cpu")
+    ray_directions = ray_directions.to("cpu")
     #
-    # grid_grid = grid_grid.to("cpu")
-    # selected_points = selected_points.to("cpu")
-    # samples_interval = samples_interval.to("cpu")
-    # ray_directions = ray_directions.to("cpu")
-    #
-    # paper_visulization(index, grid_grid, num_samples, number_of_rays, selected_points, samples_interval,
-    #                    ray_directions)
-    # result = trilinear_interpolation(normalized_samples_for_indecies, selected_points, grid_cells)
+    paper_visulization(index, grid_grid, num_samples, number_of_rays, selected_points, samples_interval,
+                       ray_directions)
+    result = trilinear_interpolation(normalized_samples_for_indecies, selected_points, grid_cells)
 
     # -- visulize points on grid closest to sampled points of ray
     # selected_points_voxels, outofbound_mask = get_nearest_voxels(normalized_samples_for_indecies, meshgrid)
@@ -526,12 +527,12 @@ def main():
     #                    samples_interval, ray_directions)
 
     # print(f"{outofbound_mask.shape=}\n{outofbound_mask.unique(return_counts =True)}")
-
+    print()
 
 if __name__ == "__main__":
     printi("start")
-    fit()
+    # fit()
     main()
-    inference_test_voxels(grid_cells_path="grid_cells_trained.pth", transparency_threshold=0.1, imgindex=160,
-                          do_threshold=True)
+    # inference_test_voxels(grid_cells_path="grid_cells_trained.pth", transparency_threshold=0.1, imgindex=160,
+    #                       do_threshold=True)
     printi("end")

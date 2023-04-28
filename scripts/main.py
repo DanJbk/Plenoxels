@@ -14,11 +14,11 @@ def main():
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
     save_path = "src/grid_cells_trained.pth"
 
-    train_path = "data/lego/train"
-    test_path = "data/lego/test"
+    train_path = "data/chair/train"
+    test_path = "data/chair/test"
 
-    transform_path_train = "data/lego/transforms_train.json"
-    transform_path_test = "data/lego/transforms_test.json"
+    transform_path_train = "data/chair/transforms_train.json"
+    transform_path_test = "data/chair/transforms_test.json"
 
     gridsize = [256, 256, 256]
     points_distance = 0.0125
@@ -30,12 +30,11 @@ def main():
     lr = 0.0075
     steps = 500
 
-    tv = 2.5
+    tv = 1.0
     beta = 0.005
-
     even_spread = False
 
-    # ---
+    # --
 
     # view cameras in relation to grid
     view_grid_cameras(train_path, transform_path_train, gridsize, points_distance, device)

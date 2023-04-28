@@ -8,7 +8,7 @@ from torch.nn.functional import mse_loss
 from tqdm import tqdm
 
 from src.data_processing import load_data, load_image_data_from_path
-from src.grid_functions import get_nearest_voxels, get_grid
+from src.grid_functions import get_nearest_voxels, generate_grid
 from src.ray_sampling import compute_alpha_weighted_pixels, normalize_samples_for_indecies, sample_camera_rays_batched
 
 
@@ -64,9 +64,9 @@ def fit(gridsize, points_distance, number_of_rays, num_samples, delta_step, lr, 
 
     # transform_matricies, imgs = transform_matricies[[10, 20, 30, 40, 50, 60, 70, 80], ...], imgs[[10, 20, 30, 40, 50, 60, 70, 80], ...]
 
-    grid_indices, grid_cells, meshgrid, grid_grid = get_grid(gridsize[0], gridsize[1], gridsize[2],
-                                                             points_distance=points_distance, info_size=4,
-                                                             device=device)
+    grid_indices, grid_cells, meshgrid, grid_grid = generate_grid(gridsize[0], gridsize[1], gridsize[2],
+                                                                  points_distance=points_distance, info_size=4,
+                                                                  device=device)
     with torch.no_grad():
         original_grid_colors = torch.rand_like(grid_cells[:, :, :, :-1])
         grid_cells[:, :, :, :-1] = original_grid_colors
@@ -82,7 +82,7 @@ def fit(gridsize, points_distance, number_of_rays, num_samples, delta_step, lr, 
 
         # generate samples
         samples_interval, pixels_to_rays, camera_positions, ray_directions = sample_camera_rays_batched(
-            transform_matricies=transform_matricies,
+            transform_matrices=transform_matricies,
             camera_angle_x=camera_angle_x,
             imgs=imgs,
             number_of_rays=number_of_rays,
@@ -98,13 +98,12 @@ def fit(gridsize, points_distance, number_of_rays, num_samples, delta_step, lr, 
 
         # assign voxel to sample
         nearest, mask = get_nearest_voxels(normalized_samples_for_indecies, grid_cells.clamp(0, 1))
-        nearest = nearest * mask.unsqueeze(-1)  # zero the samples landing outside the grid
+        nearest = nearest * mask.unsqueeze(-1)  # zero the samples that are outside the grid
 
         # find pixels color
         nearest = nearest.reshape(imgs.shape[0], number_of_rays, num_samples, 4)
         pixels_color = compute_alpha_weighted_pixels(nearest)
         color_shape = pixels_color.shape
-
         pixels_color = pixels_color.reshape([color_shape[0] * color_shape[1], color_shape[2]])
 
         update_string = []
@@ -113,14 +112,14 @@ def fit(gridsize, points_distance, number_of_rays, num_samples, delta_step, lr, 
         loss = mseloss
 
         loss_detached = mseloss.cpu().detach()
-        update_string.append(f"closs:{loss_detached}")
+        update_string.append(f"closs:{loss_detached:10.6f}")
         loss_hist.append(loss_detached)
 
         if tv > 0:
             tvloss = tv*tv_loss(grid_cells)
             loss += tvloss
             tvloss_detached = tvloss.detach().cpu()
-            update_string.append(f"tvloss:{tvloss_detached}")
+            update_string.append(f"tvloss:{tvloss_detached:10.6f}")
             tv_loss_hist.append(tvloss_detached)
 
         if beta > 0:
@@ -129,7 +128,7 @@ def fit(gridsize, points_distance, number_of_rays, num_samples, delta_step, lr, 
                                                                                      epsilon)).mean()
             loss += betaloss
             betaloss_detached = betaloss.detach().cpu()
-            update_string.append(f"betaloss:{betaloss_detached}")
+            update_string.append(f"betaloss:{betaloss_detached:10.6f}")
             beta_loss_hist.append(betaloss_detached)
 
         optimizer.zero_grad()

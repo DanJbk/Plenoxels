@@ -6,7 +6,7 @@ import torch
 
 from src.ray_sampling import normalize_samples_for_indecies, sample_camera_rays_batched
 from src.data_processing import load_data, load_image_data_from_path
-from src.grid_functions import get_nearest_voxels, get_grid
+from src.grid_functions import get_nearest_voxels, generate_grid
 from src.rays_logic import compute_alpha_weighted_pixels
 
 
@@ -33,9 +33,9 @@ def compare_grid_to_image(path, transform_path, grid_cells_path, imgindex, do_th
                           number_of_rays, num_samples, device):
 
     data, imgs = load_image_data_from_path(path, transform_path)
-    transform_matricies, file_paths, camera_angle_x = load_data(data)
+    transform_matrices, file_paths, camera_angle_x = load_data(data)
 
-    transform_matricies, imgs = transform_matricies.to(device), imgs.to(device)
+    transform_matrices, imgs = transform_matrices.to(device), imgs.to(device)
 
     grid_cells_data = torch.load(grid_cells_path)
     grid_cells = grid_cells_data["grid"].to(device)
@@ -49,18 +49,18 @@ def compare_grid_to_image(path, transform_path, grid_cells_path, imgindex, do_th
     delta_step = grid_cells_data["param"]["delta_step"]
 
     # generate grid
-    grid_indices, _, _, _ = get_grid(gridsize[0], gridsize[1], gridsize[2],
-                                     points_distance=points_distance, info_size=4,
-                                     device=device)
+    grid_indices, _, _, _ = generate_grid(gridsize[0], gridsize[1], gridsize[2],
+                                          points_distance=points_distance, info_size=4,
+                                          device=device)
 
     # choose an image to process
     img_index = imgindex  # 26#155 #45
     imgs = imgs[img_index, :, :, :].unsqueeze(0)
-    transform_matricies = transform_matricies[img_index, :, :].unsqueeze(0)
+    transform_matrices = transform_matrices[img_index, :, :].unsqueeze(0)
 
     # generate samples
     samples_interval, pixels_to_rays, camera_positions, ray_directions = sample_camera_rays_batched(
-        transform_matricies=transform_matricies,
+        transform_matrices=transform_matrices,
         camera_angle_x=camera_angle_x,
         imgs=imgs,
         number_of_rays=number_of_rays,

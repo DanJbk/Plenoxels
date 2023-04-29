@@ -30,14 +30,14 @@ def main():
     lr = 0.0075
     steps = 500
 
-    tv = 1.0
-    beta = 0.005
+    tv = 1e-5
+    beta = 5e-3
     even_spread = False
 
     # --
 
     # view cameras in relation to grid
-    view_grid_cameras(train_path, transform_path_train, gridsize, points_distance, device)
+    # view_grid_cameras(train_path, transform_path_train, gridsize, points_distance, device)
 
     # train
     fit(gridsize, points_distance, number_of_rays, num_samples, delta_step, lr, tv, beta, steps, even_spread,

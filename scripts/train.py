@@ -40,15 +40,26 @@ def main(args):
         transform_path, save_path, device)
 
 
-def tv_loss(voxel_grid):
+def tv_loss(input_tensor):
+    """
+    Computes L2 Total Variation (TV) loss for a 3D tensor of size [x,y,z,4].
+    Args:
+        input_tensor (torch.Tensor): 3D tensor of shape [x, y, z, 4].
+    Returns:
+        tv_loss (torch.Tensor): Scalar tensor containing L2 TV loss value.
+    """
+    # Compute the spatial gradients of the tensor along x, y, and z axes
 
-    # Compute gradient of voxel grid
-    grad_x = (voxel_grid[:, :, :-1, :] - voxel_grid[:, :, 1:, :])
-    grad_y = (voxel_grid[:, :-1, :, :] - voxel_grid[:, 1:, :, :])
-    grad_z = (voxel_grid[:-1, :, :, :] - voxel_grid[1:, :, :, :])
+    gradient_x = (input_tensor[:, :-1, :, :] - input_tensor[:, 1:, :, :])
+    gradient_y = (input_tensor[:, :, :-1, :] - input_tensor[:, :, 1:, :])
+    gradient_z = (input_tensor[:-1, :, :, :] - input_tensor[1:, :, :, :])
 
-    # Compute TV loss
-    tv_loss = torch.mean(grad_x * grad_x) + torch.mean(grad_y * grad_y) + torch.mean(grad_z * grad_z)
+    gradient_x = gradient_x.pow(2)
+    gradient_y = gradient_y.pow(2)
+    gradient_z = gradient_z.pow(2)
+
+    # L2 norms using the given weighting factors
+    tv_loss = torch.sqrt(gradient_x.sum() + gradient_y.sum() + gradient_z.sum())
 
     return tv_loss
 
@@ -89,7 +100,7 @@ def fit(gridsize, points_distance, number_of_rays, num_samples, delta_step, lr, 
             num_samples=num_samples,
             delta_step=delta_step,
             even_spread=even_spread,
-            camera_ray=False,
+            camera_ray=camera_ray,
             device=device
         )
 
@@ -108,6 +119,7 @@ def fit(gridsize, points_distance, number_of_rays, num_samples, delta_step, lr, 
 
         update_string = []
 
+        # compute loss
         mseloss = mse_loss(pixels_color, pixels_to_rays)
         loss = mseloss
 
@@ -131,10 +143,12 @@ def fit(gridsize, points_distance, number_of_rays, num_samples, delta_step, lr, 
             update_string.append(f"betaloss:{betaloss_detached:10.6f}")
             beta_loss_hist.append(betaloss_detached)
 
+        # optimize
         optimizer.zero_grad()
         loss.backward()
         optimizer.step()
 
+        # update bar
         pbar.update(1)
         pbar.set_description(" ".join(update_string))
 
@@ -158,20 +172,22 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description='visualize camera positions around a grid.')
     parser.add_argument('--device', default="auto", help='device to run on (cpu, cuda, auto)')
-    parser.add_argument('--save_path', default="src/grid_cells_trained.pth", help='path to data')
-    parser.add_argument('--ray_num', default=128, type=int, help='resolution of image, should (width/height) squared')
+    parser.add_argument('--save_path', default="src/grid_cells_trained.pth", help='path to trained grid')
+    parser.add_argument('--ray_num', default=128, type=int, help='amount of rays from each camera during training')
     parser.add_argument('--sample_num', default=600, type=int, help='number of samples along a ray')
-    parser.add_argument('--path', default="data/ship/train", help='path to dataset')
-    parser.add_argument('--transform_path', default="data/ship/transforms_train.json", help='path to json file')
+    parser.add_argument('--path', default="data/mic/train", help='path to dataset')
+    parser.add_argument('--transform_path', default="data/mic/transforms_train.json", help='path to json file')
     parser.add_argument('--gridsize', default=-1, type=int, help='specify cubic size of grid as a single number')
-    parser.add_argument('--grid_dim', default=[256, 256, 256], nargs='+', help='size of grid, "x y z"')
+    parser.add_argument('--grid_dim', default=[256, 256, 256], nargs='+', help='size of grid, write as "x y z"')
     parser.add_argument('--points_distance', default=0.0125, type=float, help='delta distance between points in grid')
     parser.add_argument('--delta_step', default=0.0125, type=float, help='distance between samples along a ray')
     parser.add_argument('--lr', default=0.0075, type=float, help='learning rate')
-    parser.add_argument('--tv', default=2.5, type=float, help='tv loss strength (set to 0 to disable)')
-    parser.add_argument('--beta', default=2.5, type=float, help='tv loss strength (set to 0 to disable)')
+    parser.add_argument('--tv', default=1e-5, type=float, help='tv loss strength (set to 0 to disable)')
+    parser.add_argument('--beta', default=5e-3, type=float, help='tv loss strength (set to 0 to disable)')
     parser.add_argument('--steps', default=500, type=int, help='training steps')
-    parser.add_argument('--even_spread', default=False, type=bool,  help='set to false for best results')
+    parser.add_argument('--even_spread', default=False, type=bool,  help='whether to set spread rays evenly. '
+                                                                         'the ray number needs to have a natural '
+                                                                         'square root')
     args = parser.parse_args()
 
     main(args)

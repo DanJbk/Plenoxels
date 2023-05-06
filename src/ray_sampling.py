@@ -15,6 +15,30 @@ def normalize_samples_for_indecies(grid_indices, samples_interval, points_distan
     return (samples_interval - grid_indices.min(0)[0]) / points_distance
 
 
+def sample_positive_opacity(imgs, number_of_rays, device):
+    """
+    :param imgs: tensor of shape [Cameras, H, W, 4]
+    :param number_of_rays: int
+    :param device: "cpu"/"cuda"
+    :return: normalized indices of the image with none-zero opacity
+    """
+
+    none_zero_opacity_indices = imgs[..., -1].nonzero(as_tuple=False)
+    ranges = torch.cat([torch.tensor([0], device=device), torch.diff(none_zero_opacity_indices[:, 0]).nonzero().squeeze(),
+                        torch.tensor([none_zero_opacity_indices.shape[0]], device=device)])
+    ranges_diff = ranges[1:] - ranges[:-1]
+    lower_bounds = ranges[:-1].unsqueeze(1)
+
+    result = (lower_bounds + (
+                torch.rand(ranges_diff.size(0), number_of_rays, device=device) * ranges_diff.unsqueeze(1))).type(
+        torch.long).flatten()
+    ray_indices = none_zero_opacity_indices[result][:, 1:].reshape(imgs.shape[0], number_of_rays, 2)
+    ray_indices[:, :, 0] = ray_indices[:, :, 0]/imgs.shape[1]
+    ray_indices[:, :, 1] = ray_indices[:, :, 1]/imgs.shape[2]
+
+    return ray_indices
+
+
 def generate_rays(num_rays, transform_matrix, camera_angle_x, even_spread=False):
     """
     Generates rays originating from the camera with the specified number of rays, transform matrix, and camera angle.
@@ -212,19 +236,21 @@ def generate_rays_batched(imgs, number_of_rays, transform_matricies, camera_angl
         # Calculate ray indices using Cartesian product
         ray_indices = batched_cartesian_prod(u_values, v_values)
 
+        # normalize to image space
+        pixel_indices = ray_indices.clone()
+        pixel_indices[:, :, 0] = (pixel_indices[:, :, 0] / camera_angle_x) + 0.5
+        pixel_indices[:, :, 1] = -(pixel_indices[:, :, 1] / ((camera_angle_x * (1 / aspect_ratio)).unsqueeze(1))) + 0.5
+
     else:
         # Generate random ray indices
         ray_indices = torch.rand(transform_matricies.shape[0], number_of_rays,
                                  2, device=device)  # Generate random numbers in the range [0, 1)
 
+        pixel_indices = ray_indices.clone()
+
         # Scale and shift the ray indices to match the camera's FOV
         ray_indices[:, :, 0] = camera_angle_x * (ray_indices[:, :, 0] - 0.5)
         ray_indices[:, :, 1] = -((camera_angle_x * (1 / aspect_ratio)).unsqueeze(1) * (ray_indices[:, :, 1] - 0.5))
-
-    # normalize to image space
-    pixel_indices = ray_indices.clone()
-    pixel_indices[:, :, 0] = (pixel_indices[:, :, 0] / camera_angle_x) + 0.5
-    pixel_indices[:, :, 1] = -(pixel_indices[:, :, 1] / ((camera_angle_x * (1 / aspect_ratio)).unsqueeze(1))) + 0.5
 
     # Clamp pixel indices to image dimensions
     pixel_indices[:, :, 0] = (imgs.shape[1] * pixel_indices[:, :, 0]).round().clamp(max=imgs.shape[1] - 1)

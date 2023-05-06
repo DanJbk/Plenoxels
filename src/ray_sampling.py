@@ -2,8 +2,6 @@ import torch
 import numpy as np
 
 from src.data_processing import get_data_from_index
-from src.utils import tensor_linspace, batched_cartesian_prod
-
 
 def get_camera_normal(transform_matrix):
     fixed_pos = transform_matrix[:3, :3].unsqueeze(0)
@@ -214,10 +212,6 @@ def generate_rays_batched(imgs, number_of_rays, transform_matricies, camera_angl
 
     num_cameras = transform_matricies.shape[0]
 
-    # Move tensors to the specified device
-    # imgs = imgs.to(device)
-    # transform_matricies = transform_matricies.to(device)
-
     # Extract camera axes from transformation matrices
     camera_x_axis = transform_matricies[:, :3, 0]
     camera_y_axis = transform_matricies[:, :3, 1]
@@ -226,31 +220,20 @@ def generate_rays_batched(imgs, number_of_rays, transform_matricies, camera_angl
 
     if even_spread:
         num_rays_sqrt = np.round(np.sqrt(number_of_rays))
-
-        # Compute evenly spaced u and v values for rays
-        start = torch.tensor([-0.5 * camera_angle_x], device=device).repeat(aspect_ratio.shape)
-        u_values = torch.linspace(-0.5 * camera_angle_x, 0.5 * camera_angle_x, int(num_rays_sqrt),
-                                  device=device).unsqueeze(0).repeat([aspect_ratio.shape[0], 1])
-        v_values = -tensor_linspace(start / aspect_ratio, -start / aspect_ratio, int(num_rays_sqrt), device=device)
-
-        # Calculate ray indices using Cartesian product
-        ray_indices = batched_cartesian_prod(u_values, v_values)
-
-        # normalize to image space
-        pixel_indices = ray_indices.clone()
-        pixel_indices[:, :, 0] = (pixel_indices[:, :, 0] / camera_angle_x) + 0.5
-        pixel_indices[:, :, 1] = -(pixel_indices[:, :, 1] / ((camera_angle_x * (1 / aspect_ratio)).unsqueeze(1))) + 0.5
+        linespace = torch.linspace(0, end=1, steps=int(num_rays_sqrt), device=device)
+        ray_indices = torch.cartesian_prod(linespace, linespace).repeat([imgs.shape[0], 1, 1])
 
     else:
-        # Generate random ray indices
+        # Generate random ray indices in the range [0, 1)
         ray_indices = torch.rand(transform_matricies.shape[0], number_of_rays,
-                                 2, device=device)  # Generate random numbers in the range [0, 1)
+                                 2, device=device)
 
-        pixel_indices = ray_indices.clone()
+    # get pixel indices
+    pixel_indices = ray_indices.clone()
 
-        # Scale and shift the ray indices to match the camera's FOV
-        ray_indices[:, :, 0] = camera_angle_x * (ray_indices[:, :, 0] - 0.5)
-        ray_indices[:, :, 1] = -((camera_angle_x * (1 / aspect_ratio)).unsqueeze(1) * (ray_indices[:, :, 1] - 0.5))
+    # Scale and shift the ray indices to match the camera's FOV
+    ray_indices[:, :, 0] = camera_angle_x * (ray_indices[:, :, 0] - 0.5)
+    ray_indices[:, :, 1] = -((camera_angle_x * (1 / aspect_ratio)).unsqueeze(1) * (ray_indices[:, :, 1] - 0.5))
 
     # Clamp pixel indices to image dimensions
     pixel_indices[:, :, 0] = (imgs.shape[1] * pixel_indices[:, :, 0]).round().clamp(max=imgs.shape[1] - 1)
@@ -261,7 +244,7 @@ def generate_rays_batched(imgs, number_of_rays, transform_matricies, camera_angl
     camera_to_ray = torch.repeat_interleave(torch.arange(0, transform_matricies.shape[0], device=device),
                                             number_of_rays, 0)
     pixel_indices = pixel_indices.reshape([pixel_indices.shape[0] * pixel_indices.shape[1], pixel_indices.shape[2]])
-    # pixels_to_rays = imgs[camera_to_ray, pixel_indices[:, 0], pixel_indices[:, 1]]
+
     # the y dimension is the first one, the x dimension is the second in an image
     pixels_to_rays = imgs[camera_to_ray, pixel_indices[:, 1], pixel_indices[:, 0]]
 

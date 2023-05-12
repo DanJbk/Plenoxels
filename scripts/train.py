@@ -143,6 +143,17 @@ def fit(gridsize, points_distance, number_of_rays, num_samples, delta_step, lr, 
             update_string.append(f"betaloss:{betaloss_detached:10.6f}")
             beta_loss_hist.append(betaloss_detached)
 
+        # if True:
+        #     # gridmseloss = 50*grid_cells[:, :, :, -1].flatten().clamp(0, 1).mean()
+        #     nshape = nearest.shape
+        #     linspace = torch.linspace(0, 1, nshape[2], device=device).unsqueeze(0).unsqueeze(0)
+        #     linespace_tens = (1 - linspace.expand(nshape[0], nshape[1], nshape[2]))**2
+        #     gridmseloss = 0.5*(nearest[:, :, :, -1].clip(0, 1)*linespace_tens).sum(-1).mean()
+        #     loss += gridmseloss
+        #     gridmseloss_detached = gridmseloss.detach().cpu()
+        #     update_string.append(f"gridmseloss:{gridmseloss_detached:10.6f}")
+        #     tv_loss_hist.append(gridmseloss_detached)
+
         # optimize
         optimizer.zero_grad()
         loss.backward()

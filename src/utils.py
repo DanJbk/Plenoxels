@@ -1,12 +1,5 @@
 import torch
 
-
-def batched_cartesian_prod(A, B):
-    A_expanded = A.unsqueeze(-1).expand(-1, -1, B.size(1))
-    B_expanded = B.unsqueeze(-2).expand(-1, A.size(1), -1)
-    return torch.stack((A_expanded, B_expanded), dim=-1).view(A.size(0), -1, 2)
-
-
 def tensor_linspace(start, end, steps=10, device="cuda"):
     """
     # https://github.com/zhaobozb/layout2im/blob/master/models/bilinear.py#L246

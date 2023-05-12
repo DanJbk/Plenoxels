@@ -1,6 +1,6 @@
 # Project Name
 
-Inspired by Plenoxels, This project uses a sparse voxel grid to optimize a collection of 2D images to a 3d representation. 
+Inspired by Plenoxels, This project uses a collection of 2D images to represent a 3d representation of a scene on a sparse voxel grid. 
 
 <img src="images/NVIDIA_Share_CPARLP1bdQ.png" width="250"> <img src="images/NVIDIA_Share_nPJ3TuIOQi.png" width="400"> 
 

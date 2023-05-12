@@ -2,7 +2,7 @@
 
 Inspired by Plenoxels, This project uses a sparse voxel grid to optimize a collection of 2D images to a 3d representation. 
 
-<img src="images/NVIDIA_Share_CPARLP1bdQ.png" width="250"> <img src="images/NVIDIA_Share_lNScI6UXAg.png" width="250">
+<img src="images/NVIDIA_Share_CPARLP1bdQ.png" width="250"> <img src="images/NVIDIA_Share_nPJ3TuIOQi.png" width="400"> 
 
 ## Setup
 
@@ -26,10 +26,10 @@ Inference of a test image with a trained grid.
 A script that trains the model using the provided dataset.
 
 ### visulize_camera_and_grid.py
-Visualizes the camera position and orientation along with the voxel grid.
+Visualizes cameras position and orientation along with the voxel grid.
 
 ### visulize_grid.py
-Displays a 3D view of the voxel grid.
+Displays and saves a 3D view of the voxel grid in an HTML file.
 
 
 ## Saving Results

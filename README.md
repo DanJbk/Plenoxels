@@ -8,7 +8,7 @@ Inspired by Plenoxels, This project uses a collection of 2D images to represent 
 
 1. Clone the repository and navigate to the root directory of the project.
 2. Download the dataset and place it in the data folder.
-3.Run `pip install -r requirements.txt`.
+3. Run `pip install -r requirements.txt`.
 4. Run `python scripts/main.py` to start the training process.
 
 ## Dataset

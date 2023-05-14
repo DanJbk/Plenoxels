@@ -1,4 +1,4 @@
-# Project Name
+# Plenoxels
 
 Inspired by Plenoxels, This project uses a collection of 2D images to represent a 3d representation of a scene on a sparse voxel grid. 
 

@@ -14,11 +14,11 @@ def main():
     device = "cuda:0" if torch.cuda.is_available() else "cpu"
     save_path = "src/grid_cells_trained.pth"
 
-    train_path = "data/lego/train"
-    test_path = "data/lego/test"
+    train_path = "data/chair/train"
+    test_path = "data/chair/test"
 
-    transform_path_train = "data/lego/transforms_train.json"
-    transform_path_test = "data/lego/transforms_test.json"
+    transform_path_train = "data/chair/transforms_train.json"
+    transform_path_test = "data/chair/transforms_test.json"
 
     gridsize = [256, 256, 256]
     points_distance = 0.0125
@@ -28,10 +28,10 @@ def main():
     delta_step = 0.0125
 
     lr = 0.0075
-    steps = 500
+    steps = 1500
 
     tv = 1e-5
-    beta = 5e-3
+    beta = 0 #5e-3
     even_spread = False
 
     # --
@@ -46,7 +46,7 @@ def main():
         save_path, device)
 
     # visualize result in 2d
-    compare_grid_to_image(test_path, transform_path_test, save_path, 26, do_threshold=True, transparency_threshold=0.1,
+    compare_grid_to_image(test_path, transform_path_test, save_path, 26, do_threshold=True, transparency_threshold=0.05,
                           number_of_rays=100*100, num_samples=num_samples, device=device)
 
     # visualize result in 3d

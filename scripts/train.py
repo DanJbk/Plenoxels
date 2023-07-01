@@ -8,7 +8,7 @@ from torch.nn.functional import mse_loss
 from tqdm import tqdm
 
 from src.data_processing import load_data, load_image_data_from_path
-from src.grid_functions import get_nearest_voxels, generate_grid
+from src.grid_functions import get_nearest_voxels, generate_grid, average_pool3d_grid
 from src.ray_sampling import compute_alpha_weighted_pixels, normalize_samples_for_indecies, sample_camera_rays_batched
 
 
@@ -64,7 +64,7 @@ def tv_loss(input_tensor):
     return tv_loss
 
 
-def fit(gridsize, points_distance, number_of_rays, num_samples, delta_step, lr, tv, beta, steps, even_spread, path,
+def fit(gridsize, points_distance_original, number_of_rays, num_samples, delta_step, lr, tv, beta, steps, even_spread, path,
         transform_path, save_path, device):
 
     camera_ray = False
@@ -74,22 +74,59 @@ def fit(gridsize, points_distance, number_of_rays, num_samples, delta_step, lr, 
     transform_matricies, imgs = transform_matricies.to(device), imgs.to(device)
 
     # transform_matricies, imgs = transform_matricies[[10, 20, 30, 40, 50, 60, 70, 80], ...], imgs[[10, 20, 30, 40, 50, 60, 70, 80], ...]
+    transform_matricies, imgs = transform_matricies[[10, 2, 6, 61], ...], imgs[[10, 2, 6, 61], ...]
 
-    grid_indices, grid_cells, meshgrid, grid_grid = generate_grid(gridsize[0], gridsize[1], gridsize[2],
-                                                                  points_distance=points_distance, info_size=4,
+    grid_indices, grid_cells_full, meshgrid, grid_grid_original = generate_grid(gridsize[0], gridsize[1], gridsize[2],
+                                                                  points_distance=points_distance_original, info_size=4,
                                                                   device=device)
-    with torch.no_grad():
-        original_grid_colors = torch.rand_like(grid_cells[:, :, :, :-1])
-        grid_cells[:, :, :, :-1] = original_grid_colors
 
-    optimizer = Adam([grid_cells], lr=lr)
+
+    with torch.no_grad():
+        original_grid_colors = torch.rand_like(grid_cells_full[:, :, :, :-1])
+        grid_cells_full[:, :, :, :-1] = original_grid_colors
+
+    optimizer = Adam([grid_cells_full], lr=lr)
+
+
 
     loss_hist = []
     beta_loss_hist = []
     tv_loss_hist = []
 
     pbar = tqdm(total=steps, desc="Processing items")
+
+    # receptive_fields = [i for i in range(1,51) if i%2 != 0 ]
+    # start_receptive_fields = [i for i in range(len(receptive_fields))]
+
+    receptive_fields = [i for i in range(3, 61, 2) if i % 2 != 0]
+    start_receptive_fields = [i * 25 for i in range(1 + len(receptive_fields), 0, -1)]
+
     for i in range(steps):
+
+        # ---
+
+        receptive_field_size = max(a if i < b else 0 for a, b in zip(receptive_fields, start_receptive_fields))
+        if i % 10 == 0:
+            print(f"{receptive_field_size=}")
+        if receptive_field_size > 1:
+
+            stride = max(1, receptive_field_size // 4)
+
+            start_index = int(receptive_field_size / 2)
+
+            grid_grid = grid_grid_original[start_index::stride, start_index::stride,
+                        start_index::stride]
+            grid_indices = grid_grid.reshape(-1, 3)
+
+            points_distance = points_distance_original * stride #(receptive_field_size - 1)
+
+            grid_cells = average_pool3d_grid(grid_cells_full, receptive_field_size=receptive_field_size, stride=stride)
+        else:
+            grid_cells = grid_cells_full
+            grid_indices = grid_grid_original.reshape(-1, 3)
+            points_distance = points_distance_original
+
+        # ---
 
         # generate samples
         samples_interval, pixels_to_rays, camera_positions, ray_directions = sample_camera_rays_batched(
@@ -127,7 +164,7 @@ def fit(gridsize, points_distance, number_of_rays, num_samples, delta_step, lr, 
         update_string.append(f"closs:{loss_detached:10.6f}")
         loss_hist.append(loss_detached)
 
-        if tv > 0:
+        if tv > 0 and receptive_field_size == 0:
             tvloss = tv*tv_loss(grid_cells)
             loss += tvloss
             tvloss_detached = tvloss.detach().cpu()
@@ -165,7 +202,7 @@ def fit(gridsize, points_distance, number_of_rays, num_samples, delta_step, lr, 
 
     # save grid and parameters
     torch.save({
-        "grid": grid_cells.detach().cpu(),
+        "grid": grid_cells_full.detach().cpu(),
         "param": {
             "device": device,
             "number_of_rays": number_of_rays,
@@ -173,7 +210,7 @@ def fit(gridsize, points_distance, number_of_rays, num_samples, delta_step, lr, 
             "delta_step": delta_step,
             "even_spread": even_spread,
             "camera_ray": camera_ray,
-            "points_distance": points_distance,
+            "points_distance": points_distance_original,
             "gridsize": gridsize,
         },
     }, save_path)

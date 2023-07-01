@@ -1,6 +1,6 @@
 import torch
 import numpy as np
-
+import torch.nn.functional as F
 
 def trilinear_interpolation(normalized_samples_for_indecies, selected_points, grid_cells):
     """
@@ -77,13 +77,35 @@ def fix_out_of_bounds(indices, grid):
     return idx1, idx2, idx3
 
 
-def get_nearest_voxels(normalized_samples_for_indices, grid):
+def voxel_average(tensor, receptive_field_size=3):
+    # Ensure receptive_field_size is odd
+    assert receptive_field_size % 2 == 1, "receptive_field_size should be odd"
+
+    # Move the RGBD dimension to the second position and convert to float
+    tensor = tensor.permute(3, 0, 1, 2).unsqueeze(0).float()  # size becomes [1, 4, X, Y, Z]
+
+    # Define the filter (kernel)
+    kernel_value = 1.0 / (receptive_field_size ** 3)
+    kernel = torch.full((1, 1, receptive_field_size, receptive_field_size, receptive_field_size), kernel_value,
+                        device=tensor.device).repeat(4, 1, 1, 1, 1)
+
+    # Apply the filter to your tensor using the convolution operation
+    result = F.conv3d(tensor, kernel, padding=receptive_field_size // 2, groups=4)
+
+    # Move the RGBD dimension to the last position again
+    result = result.squeeze(0).permute(1, 2, 3, 0)  # size becomes [X, Y, Z, 4]
+
+    return result
+
+
+def get_nearest_voxels(normalized_samples_for_indices, grid, receptive_field=1):
     """
     Gets the nearest voxel values for the given normalized samples in the grid.
     :param normalized_samples_for_indices: A tensor of size (N, 3) containing normalized sample points.
     :param grid: A tensor representing the grid in which the points are located.
     :return: A tuple containing the tensor with the nearest voxel values and a boolean tensor indicating
     """
+    # grid = voxel_average(grid, receptive_field_size=15) # sorta works but too slow
     indices = torch.round(normalized_samples_for_indices).to(torch.long)
     outofbounds = find_out_of_bound(indices, grid)
     idx1, idx2, idx3 = fix_out_of_bounds(indices, grid)
@@ -108,6 +130,23 @@ def collect_cell_information_via_indices(normalized_samples_for_indices, B):
     output = B[idx1, idx2, idx3]
     return output, outofbounds
 
+
+def average_pool3d_grid(tensor, receptive_field_size=3, stride=None):
+    # Suppose your tensor is named `input`
+    # input shape: [X,Y,Z,4]
+    # Swap dimensions to make channels the second dimension
+    input = tensor.permute(3, 0, 1, 2).unsqueeze(0)
+
+    # Define the size of your receptive field
+    # For example, it's [2,2,2]
+    receptive_field = (receptive_field_size, receptive_field_size, receptive_field_size)
+
+    # Create the AvgPool3d layer
+    output = F.avg_pool3d(input, receptive_field, stride=stride)
+
+    # Swap dimensions back
+    output = output.squeeze().permute(1, 2, 3, 0)
+    return output
 
 
 def generate_grid(sx, sy, sz, points_distance=0.5, info_size=4, device="cuda"):

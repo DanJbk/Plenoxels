@@ -67,7 +67,7 @@ def visulize_grid_ploty(grid_cells_path, threshold, do_threshold):
 if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description='visualize camera positions around a grid.')
-    parser.add_argument('--threshold', default=0.2, type=float, help='opacity threshold for showing the voxel')
+    parser.add_argument('--threshold', default=0.0, type=float, help='opacity threshold for showing the voxel')
     parser.add_argument('--do_threshold', default=True, type=bool, help='opacity threshold for showing the voxel')
     parser.add_argument('--grid_cells_path', default="src/grid_cells_trained.pth", help='path to saved tensor')
     args = parser.parse_args()

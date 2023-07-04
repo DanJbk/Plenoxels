@@ -74,7 +74,7 @@ def fit(gridsize, points_distance_original, number_of_rays, num_samples, delta_s
     transform_matricies, imgs = transform_matricies.to(device), imgs.to(device)
 
     # transform_matricies, imgs = transform_matricies[[10, 20, 30, 40, 50, 60, 70, 80], ...], imgs[[10, 20, 30, 40, 50, 60, 70, 80], ...]
-    transform_matricies, imgs = transform_matricies[[10, 2, 6, 61], ...], imgs[[10, 2, 6, 61], ...]
+    transform_matricies, imgs = transform_matricies[[10, 68, 41], ...], imgs[[10, 68, 41], ...]
 
     grid_indices, grid_cells_full, meshgrid, grid_grid_original = generate_grid(gridsize[0], gridsize[1], gridsize[2],
                                                                   points_distance=points_distance_original, info_size=4,
@@ -82,7 +82,8 @@ def fit(gridsize, points_distance_original, number_of_rays, num_samples, delta_s
 
 
     with torch.no_grad():
-        original_grid_colors = torch.rand_like(grid_cells_full[:, :, :, :-1])
+        # original_grid_colors = torch.rand_like(grid_cells_full[:, :, :, :-1])
+        original_grid_colors = torch.zeros_like(grid_cells_full[:, :, :, :-1])
         grid_cells_full[:, :, :, :-1] = original_grid_colors
 
     optimizer = Adam([grid_cells_full], lr=lr)
@@ -98,8 +99,8 @@ def fit(gridsize, points_distance_original, number_of_rays, num_samples, delta_s
     # receptive_fields = [i for i in range(1,51) if i%2 != 0 ]
     # start_receptive_fields = [i for i in range(len(receptive_fields))]
 
-    receptive_fields = [i for i in range(3, 61, 2) if i % 2 != 0]
-    start_receptive_fields = [i * 25 for i in range(1 + len(receptive_fields), 0, -1)]
+    receptive_fields = [i for i in range(3, 51, 2) if i % 2 != 0]
+    start_receptive_fields = [i * 15 for i in range(1 + len(receptive_fields), 0, -1)]
 
     for i in range(steps):
 

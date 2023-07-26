@@ -30,7 +30,7 @@ def main(args):
 
 
 def compare_grid_to_image(path, transform_path, grid_cells_path, imgindex, do_threshold, transparency_threshold,
-                          number_of_rays, num_samples, device):
+                          number_of_rays, num_samples, device, save_image=False, image_path=None):
 
     data, imgs = load_image_data_from_path(path, transform_path)
     transform_matrices, file_paths, camera_angle_x = load_data(data)
@@ -95,17 +95,26 @@ def compare_grid_to_image(path, transform_path, grid_cells_path, imgindex, do_th
     image_gt = (image_gt * 255).astype(np.uint8)
     image_gt = np.transpose(image_gt, (1, 0, 2))
 
+    if image_path and save_image:
+        # fig.savefig(image_path)
+        plt.imsave(image_path, np.ascontiguousarray(image))
+        return
+
     # display
     fig = plt.figure()
 
     ax1 = fig.add_subplot(121)
     ax2 = fig.add_subplot(122)
+
     fig.subplots_adjust(left=0.05, bottom=0.05, right=None, top=None, wspace=0.0, hspace=None)
+
     for ax in fig.axes:
         ax.xaxis.set_visible(False)
         ax.yaxis.set_visible(False)
+
     ax1.imshow(image)
     ax2.imshow(image_gt)
+
     fig.set_size_inches((8, 6))
     plt.show()
 

@@ -1,6 +1,8 @@
 import torch
 import numpy as np
 import torch.nn.functional as F
+from tqdm import tqdm
+
 
 def trilinear_interpolation(normalized_samples_for_indecies, selected_points, grid_cells):
     """
@@ -105,11 +107,55 @@ def get_nearest_voxels(normalized_samples_for_indices, grid, receptive_field=1):
     :param grid: A tensor representing the grid in which the points are located.
     :return: A tuple containing the tensor with the nearest voxel values and a boolean tensor indicating
     """
+    # points = torch.tensor([[5, 6, 7], [2, 5, 8], [4, 6, 7]])
+    # slice_size = 3
+    # indices_x = torch.clamp(points[:, 0].unsqueeze(1) + torch.arange(-slice_size + 1, slice_size), 0, sx - 1).long()
+    # indices_y = torch.clamp(points[:, 1].unsqueeze(1) + torch.arange(-slice_size + 1, slice_size), 0, sy - 1).long()
+    # indices_z = torch.clamp(points[:, 2].unsqueeze(1) + torch.arange(-slice_size + 1, slice_size), 0, sz - 1).long()
+    # subarrays = meshgrid[indices_x[:, :, None, None], indices_y[:, None, :, None], indices_z[:, None, None, :]]
+
     # grid = voxel_average(grid, receptive_field_size=15) # sorta works but too slow
     indices = torch.round(normalized_samples_for_indices).to(torch.long)
     outofbounds = find_out_of_bound(indices, grid)
     idx1, idx2, idx3 = fix_out_of_bounds(indices, grid)
     return grid[idx1, idx2, idx3], outofbounds
+
+
+def get_receptive_field_voxels(grid, normalized_samples, receptive_field=1, device='cpu'):
+
+    sx, sy, sz, _ = grid.shape
+
+    kernel_size = receptive_field // 2
+
+    # Create tensors of indices
+    # each of shape torch.Size([4, receptive_field])
+    indices_x = normalized_samples[:, 0].unsqueeze(1) + torch.arange(-kernel_size, 1 + kernel_size, device=device)
+    indices_y = normalized_samples[:, 1].unsqueeze(1) + torch.arange(-kernel_size, 1 + kernel_size, device=device)
+    indices_z = normalized_samples[:, 2].unsqueeze(1) + torch.arange(-kernel_size, 1 + kernel_size, device=device)
+
+    # Create the mask indices
+    # each of shape torch.Size([4, receptive_field])
+    mask_x = (indices_x >= 0) & (indices_x < sx)
+    mask_y = (indices_y >= 0) & (indices_y < sy)
+    mask_z = (indices_z >= 0) & (indices_z < sz)
+
+    # Combine the masks for each dimension
+    # of shape torch.Size([4, receptive_field, receptive_field, receptive_field])
+    mask = mask_x[:, :, None, None] & mask_y[:, None, :, None] & mask_z[:, None, None, :]
+
+    # clamp the indices to avoid out of range errors
+    torch.clamp_(indices_x, 0, sx - 1)
+    torch.clamp_(indices_y, 0, sy - 1)
+    torch.clamp_(indices_z, 0, sz - 1)
+
+    # Use the index tensors to extract the subarrays from the meshgrid
+    # of shape torch.Size([4, receptive_field, receptive_field, receptive_field, 3])
+    result = grid[indices_x[:, :, None, None], indices_y[:, None, :, None], indices_z[:, None, None, :]]
+    result.mul_(mask.unsqueeze(-1))
+
+    # mean the area around the points
+    # use mean and reduce to shape torch.Size([receptive_field, 3])
+    return result.mean(dim=(1, 2, 3))
 
 
 def collect_cell_information_via_indices(normalized_samples_for_indices, B):
@@ -212,3 +258,35 @@ def get_grid_points_indices(normalized_samples_for_indecies):
     relevant_points = torch.cat(relevant_points, 1).type(torch.long)
 
     return relevant_points
+
+def gaussian_kernel_3d(size: int = 3, sigma: float = 1.0):
+    """Generate 3D Gaussian kernel."""
+    k = np.linspace(-(size // 2), size // 2, size)
+    x, y, z = np.meshgrid(k, k, k)
+    d = np.sqrt(x * x + y * y + z * z)
+    kernel = np.exp(-(d ** 2) / (2.0 * sigma ** 2))
+    kernel[size // 2, size // 2, size // 2] = 0  # Ensure the center is 0
+    kernel /= np.sum(kernel)
+    return torch.from_numpy(kernel).float()
+
+def filled_circle_kernel_3d(size: int = 3, radius: float = 1.0):
+    """Generate 3D filled circular kernel."""
+    k = np.linspace(-(size // 2), size // 2, size)
+    x, y, z = np.meshgrid(k, k, k)
+    d = np.sqrt(x * x + y * y + z * z)
+    kernel = np.where(d <= radius, 1, 0)
+    kernel[size // 2, size // 2, size // 2] = 0  # Ensure the center is 0
+    return torch.from_numpy(kernel).float()
+
+
+def convolve_grid_to_remove_noise(grid_cells, kernel_size=3, radius=1.0, threshold=2, repeats=20):
+    weights = filled_circle_kernel_3d(kernel_size, radius).unsqueeze(0).unsqueeze(
+        0)
+    weights = weights.to(grid_cells.device)  # Move weights to the same device as the tensor
+    weights /= weights.max()
+
+    for _ in tqdm(range(repeats)):
+        output = F.conv3d(grid_cells[..., -1].unsqueeze(0), weights, padding='same')[0]
+        grid_cells[output < threshold] = 0
+
+    return grid_cells

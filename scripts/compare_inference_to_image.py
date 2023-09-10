@@ -8,6 +8,7 @@ from src.ray_sampling import normalize_samples_for_indecies, sample_camera_rays_
 from src.data_processing import load_data, load_image_data_from_path
 from src.grid_functions import get_nearest_voxels, generate_grid
 from src.rays_logic import compute_alpha_weighted_pixels
+from src.visualization import visulize_3d_in_2d_fast
 
 
 def main(args):
@@ -38,7 +39,7 @@ def compare_grid_to_image(path, transform_path, grid_cells_path, imgindex, do_th
     transform_matrices, imgs = transform_matrices.to(device), imgs.to(device)
 
     grid_cells_data = torch.load(grid_cells_path)
-    grid_cells = grid_cells_data["grid"].to(device)
+    grid_cells = grid_cells_data["grid"].detach().to(device)
     grid_cells = grid_cells.clip(0.0, 1.0)
     if do_threshold:
         alphas = grid_cells[..., -1]
@@ -52,48 +53,13 @@ def compare_grid_to_image(path, transform_path, grid_cells_path, imgindex, do_th
     grid_indices, _, _, _ = generate_grid(gridsize[0], gridsize[1], gridsize[2],
                                           points_distance=points_distance, info_size=4,
                                           device=device)
-
     # choose an image to process
-    img_index = imgindex  # 26#155 #45
-    imgs = imgs[img_index, :, :, :].unsqueeze(0)
-    transform_matrices = transform_matrices[img_index, :, :].unsqueeze(0)
-
-    # generate samples
-    samples_interval, pixels_to_rays, camera_positions, ray_directions = sample_camera_rays_batched(
-        transform_matrices=transform_matrices,
-        camera_angle_x=camera_angle_x,
-        imgs=imgs,
-        number_of_rays=number_of_rays,
-        num_samples=num_samples,
-        delta_step=delta_step,
-        even_spread=True,
-        camera_ray=False,
-        device=device
-    )
-
-    # compute closest grid points to samples
-    normalized_samples_for_indecies = normalize_samples_for_indecies(grid_indices, samples_interval, points_distance)
-
-    # assign samples to voxels
-    nearest, mask = get_nearest_voxels(normalized_samples_for_indecies, grid_cells)
-    nearest = nearest * mask.unsqueeze(-1)  # zero the samples landing outside the grid
-
-    # find pixels color
-    nearest = nearest.reshape(1, number_of_rays, num_samples, 4)
-    pixels_color = compute_alpha_weighted_pixels(nearest)
-
-    res = int(np.sqrt(number_of_rays))
-
-    # reshape and normalize an image and show
-    pixels_color = pixels_color.cpu().detach().numpy()
-    pixels_color = (pixels_color * 255).round().clip(0, 255).astype(np.uint8)
-    image = pixels_color.reshape(res, res, 4)
-    image = np.transpose(image, (1, 0, 2))
+    imgs = imgs[imgindex, :, :, :].unsqueeze(0)
+    image = visulize_3d_in_2d_fast(grid_cells, points_distance, transform_matrices[imgindex], camera_angle_x,
+                                   size_y=500)
 
     # image ground truth
-    image_gt = pixels_to_rays.reshape(res, res, 4).cpu().detach().numpy()
-    image_gt = (image_gt * 255).astype(np.uint8)
-    image_gt = np.transpose(image_gt, (1, 0, 2))
+    image_gt = (imgs * 255).squeeze().numpy().astype(np.uint8)
 
     if image_path and save_image:
         # fig.savefig(image_path)
@@ -126,12 +92,12 @@ if __name__ == "__main__":
     parser.add_argument('--threshold', default=0.2, type=float, help='opacity threshold for showing the voxel')
     parser.add_argument('--do_threshold', default=True, type=bool, help='opacity threshold for showing the voxel')
     parser.add_argument('--point_distance', default=0.05, type=float, help='distance from point to point')
-    parser.add_argument('--grid_cells_path', default="src/grid_cells_trained.pth", help='path to dataset')
-    parser.add_argument('--transform_path', default="data/chair/transforms_train.json", help='path to json file')
+    parser.add_argument('--grid_cells_path', default="src/grid_cells_trained_2000_steps_quality_parameters.pth", help='path to dataset')
+    parser.add_argument('--transform_path', default="data/ship/transforms_train.json", help='path to json file')
     parser.add_argument('--image_num', default=0, type=int, help='index of image to view')
     parser.add_argument('--ray_num', default=40000, type=int, help='resolution of image, should (width/height) squared')
     parser.add_argument('--sample_num', default=600, type=int, help='number of samples along a ray')
-    parser.add_argument('--path', default="data/chair/train", help='path to dataset')
+    parser.add_argument('--path', default="data/ship/train", help='path to dataset')
     args = parser.parse_args()
 
     main(args)

@@ -259,6 +259,7 @@ def get_grid_points_indices(normalized_samples_for_indecies):
 
     return relevant_points
 
+
 def gaussian_kernel_3d(size: int = 3, sigma: float = 1.0):
     """Generate 3D Gaussian kernel."""
     k = np.linspace(-(size // 2), size // 2, size)
@@ -268,6 +269,7 @@ def gaussian_kernel_3d(size: int = 3, sigma: float = 1.0):
     kernel[size // 2, size // 2, size // 2] = 0  # Ensure the center is 0
     kernel /= np.sum(kernel)
     return torch.from_numpy(kernel).float()
+
 
 def filled_circle_kernel_3d(size: int = 3, radius: float = 1.0):
     """Generate 3D filled circular kernel."""

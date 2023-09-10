@@ -1,8 +1,12 @@
 import numpy as np
+import torch
 from matplotlib import pyplot as plt
 import matplotlib.colors as mcolors
 import plotly.graph_objs as go
 import plotly.io as pio
+
+from src.grid_functions import get_nearest_voxels
+from src.ray_sampling import normalize_samples_for_indecies, sample_camera_rays_batched, compute_alpha_weighted_pixels
 
 
 def visulize_rays(ray_directions, camera_positions):
@@ -104,6 +108,125 @@ def visualize_rays_3d_plotly(ray_directions, camera_positions, red=None, green=N
 
     # fig.show()
 
+def visulize_3d_in_2d(grid_cells_data, transform_matrices, camera_angle_x, imgs, grid_indices, do_threshold,
+                      transparency_threshold, number_of_rays, num_samples, device="cpu"):
+
+    grid_cells = grid_cells_data["grid"].detach().to(device)
+    grid_cells = grid_cells.clip(0.0, 1.0)
+    if do_threshold:
+        alphas = grid_cells[..., -1]
+        grid_cells[..., -1][alphas < transparency_threshold] = 0.0
+
+    gridsize = grid_cells.shape
+    points_distance = grid_cells_data["param"]["points_distance"]
+    delta_step = grid_cells_data["param"]["delta_step"]
+
+    # generate samples
+    samples_interval, pixels_to_rays, camera_positions, ray_directions = sample_camera_rays_batched(
+        transform_matrices=transform_matrices,
+        camera_angle_x=camera_angle_x,
+        imgs=imgs,
+        number_of_rays=number_of_rays,
+        num_samples=num_samples,
+        delta_step=delta_step,
+        even_spread=True,
+        camera_ray=False,
+        device=device
+    )
+
+    # compute closest grid points to samples
+    normalized_samples_for_indecies = normalize_samples_for_indecies(grid_indices, samples_interval, points_distance)
+
+    # assign samples to voxels
+    nearest, mask = get_nearest_voxels(normalized_samples_for_indecies, grid_cells)
+    nearest = nearest * mask.unsqueeze(-1)  # zero the samples landing outside the grid
+
+    # find pixels color
+    nearest = nearest.reshape(1, number_of_rays, num_samples, 4)
+    pixels_color = compute_alpha_weighted_pixels(nearest)
+    res = int(np.sqrt(number_of_rays))
+
+    # reshape and normalize an image and show
+    pixels_color = pixels_color.cpu().detach().numpy()
+    pixels_color = (pixels_color * 255).round().clip(0, 255).astype(np.uint8)
+    image = pixels_color.reshape(res, res, 4)
+
+    return np.transpose(image, (1, 0, 2))
+
+
+def visulize_3d_in_2d_fast(grid, points_distance, transform_matrix, camera_angle_x, size_y):
+    # Load camera parameters ---
+
+    rotation_matrix = transform_matrix[:3, :3]
+    camera_normal = -rotation_matrix[:, 2]
+    pos = transform_matrix[:3, 3]
+
+    camera_yz_plane_normal = transform_matrix[:3, 0]  # also the Y axis used for the camera
+    camera_xz_plane_normal = transform_matrix[:3, 1]  # also the X axis used for the camera
+    # camera_xy_plane_normal = transform_matrix[:3, 2] # unused
+
+    aspect_ratio = camera_yz_plane_normal.norm(dim=0) / camera_xz_plane_normal.norm(dim=0)
+
+    # get points ---
+
+    condition = grid[..., 3] > 0.1
+    points = np.argwhere(condition)
+    points_colors = grid[condition]
+
+    # normalize points to world coordinates ---
+
+    grid_halfsize = (torch.tensor(grid.shape[:3]) / 2).unsqueeze(1).ceil()
+    points = (points - grid_halfsize) + 1
+    points = (points * points_distance).T
+
+    # get location of points on screen via camera fov in x and y axis ---
+
+    camera_to_points = points - pos
+
+    yz_dot_products = torch.matmul(camera_to_points, camera_yz_plane_normal)
+    xz_dot_products = torch.matmul(camera_to_points, camera_xz_plane_normal)
+
+    norms_mul = (camera_to_points.norm(dim=1) * camera_yz_plane_normal.norm())
+    radians_angles_x = yz_dot_products / norms_mul
+    radians_angles_y = xz_dot_products / norms_mul
+
+    x_locs_normalized = 0.5 + radians_angles_y / -camera_angle_x
+    y_locs_normalized = 0.5 + radians_angles_x / (camera_angle_x / aspect_ratio)
+
+    # remove points outside the fov ---
+
+    unfitxy = (
+            x_locs_normalized < 1.0
+    ).logical_and(x_locs_normalized >= 0.0
+                  ).logical_and(y_locs_normalized < 1.0
+                                ).logical_and(y_locs_normalized >= 0.0
+                                              )
+
+    x_locs_normalized = x_locs_normalized[unfitxy]
+    y_locs_normalized = y_locs_normalized[unfitxy]
+    points_colors = points_colors[unfitxy]
+    camera_to_points = camera_to_points[unfitxy]
+
+    # normalize to image space ---
+
+    ys = size_y
+    xs = int(ys * aspect_ratio)
+
+    xx = (xs * x_locs_normalized).round().clamp(min=0, max=xs - 1).type(torch.long)
+    yy = (ys * y_locs_normalized).round().clamp(min=0, max=ys - 1).type(torch.long)
+
+    # sort points via distance from camera ---
+
+    distances = camera_to_points.norm(dim=1)
+    sorted_indices = torch.argsort(-distances)
+    xx, yy, points_colors = xx[sorted_indices], yy[sorted_indices], points_colors[sorted_indices]
+
+    # draw image --
+
+    img = np.ones([xs, ys, 3])
+    img[xx, yy] = points_colors[:, :3]
+
+    return img
 
 def voxel_visulization(index, grid_grid, num_samples, number_of_rays, selected_points_voxels, samples_interval,
                        ray_directions):

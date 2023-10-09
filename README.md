@@ -1,6 +1,7 @@
 # Plenoxels
 
-Inspired by Plenoxels, This project uses a collection of 2D images to represent a 3d representation of a scene on a sparse voxel grid. 
+Inspired by Plenoxels, This project uses a collection of 2D images to generate a 3d representation of a scene on a sparse voxel grid. 
+The project is heavily optimized to run on consumer devices and in pure pytorch, so view dependent values are not yet supported, during optimization the voxel distances are calculated using Nearest-Neighbors. genaration might take 2-10 minutes depending on hardware.
 
 <img src="images/NVIDIA_Share_CPARLP1bdQ.png" width="250"> <img src="images/NVIDIA_Share_nPJ3TuIOQi.png" width="400"> 
 

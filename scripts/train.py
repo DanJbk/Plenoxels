@@ -78,8 +78,8 @@ def fit(gridsize, points_distance_original, number_of_rays, num_samples, delta_s
 
     # transform_matricies, imgs = transform_matricies[[10, 20, 30, 40, 50, 60, 70, 80], ...], imgs[[10, 20, 30, 40, 50, 60, 70, 80], ...]
     # transform_matricies, imgs = transform_matricies[[20, 24], ...], imgs[[20, 24], ...]
-    transform_matricies, imgs = transform_matricies[[10, 81, 54], ...], imgs[[10, 81, 54], ...]
-    # transform_matricies, imgs = transform_matricies[[10, 68, 41, 50], ...], imgs[[10, 68, 41, 50], ...]
+    # transform_matricies, imgs = transform_matricies[[10, 81, 54], ...], imgs[[10, 81, 54], ...]
+    transform_matricies, imgs = transform_matricies[[10, 68, 41, 50], ...], imgs[[10, 68, 41, 50], ...]
 
     grid_indices, grid_cells_full, meshgrid, grid_grid_original = generate_grid(gridsize[0], gridsize[1], gridsize[2],
                                                                   points_distance=points_distance_original, info_size=4,
@@ -149,37 +149,37 @@ def fit(gridsize, points_distance_original, number_of_rays, num_samples, delta_s
         update_string.append(f"grid size: {grid_cells.shape}, kernel size: {receptive_field_size}")
 
         if (((i + 1) % 15 == 0 and (i // steps_per_field) < len(receptive_fields)) or (i + 1) % 25 == 0):
+            with torch.inference_mode():
+                torch.save({
+                    "grid": grid_cells.detach().cpu(),
+                    "param": {
+                        "device": "cpu",
+                        "number_of_rays": number_of_rays,
+                        "num_samples": num_samples,
+                        "delta_step": delta_step,
+                        "even_spread": even_spread,
+                        "camera_ray": camera_ray,
+                        "points_distance": points_distance,
+                        "gridsize": gridsize,
+                    },
+                }, save_path)
 
-            torch.save({
-                "grid": grid_cells.detach().cpu(),
-                "param": {
-                    "device": "cpu",
-                    "number_of_rays": number_of_rays,
-                    "num_samples": num_samples,
-                    "delta_step": delta_step,
-                    "even_spread": even_spread,
-                    "camera_ray": camera_ray,
-                    "points_distance": points_distance,
-                    "gridsize": gridsize,
-                },
-            }, save_path)
+                # pool_result = pool.apply_async(visulize_grid_ploty, args=("src/grid_cells_trained.pth", 0.015, True, False,
+                #                                             f"D:\\9.programming\\Plenoxels\\screenshots\\image{i}.png"))
 
-            # pool_result = pool.apply_async(visulize_grid_ploty, args=("src/grid_cells_trained.pth", 0.015, True, False,
-            #                                             f"D:\\9.programming\\Plenoxels\\screenshots\\image{i}.png"))
-
-            frame += 1 # (i // 15) if (i // steps_per_field) < len(receptive_fields) else ((i + 210) // 25)
-            print(frame)
-            pool_result = pool.apply_async(
-                compare_grid_to_image(path.replace("train", "test"), transform_path.replace("train", "test"),
-                                      save_path, frame, do_threshold=True, transparency_threshold=0.00,
-                                      number_of_rays=250 * 250, num_samples=num_samples, device=device,
-                                      save_image=True,
-                                      image_path=f"D:\\9.programming\\Plenoxels\\screenshots\\image{i}.png"
-                                      )
-            )
-            pool_results.append(pool_result)
-            pool_results = [some_pool_result for some_pool_result in pool_results if not some_pool_result.ready()]
-            update_string_persist["unfinished save tasks"] = len(pool_results)
+                frame += 1 # (i // 15) if (i // steps_per_field) < len(receptive_fields) else ((i + 210) // 25)
+                # print(frame)
+                pool_result = pool.apply_async(
+                    compare_grid_to_image(path.replace("train", "test"), transform_path.replace("train", "test"),
+                                          save_path, frame, do_threshold=True, transparency_threshold=0.00,
+                                          number_of_rays=250 * 250, num_samples=num_samples, device=device,
+                                          save_image=True,
+                                          image_path=f"D:\\9.programming\\Plenoxels\\screenshots\\image{i}.png"
+                                          )
+                )
+                pool_results.append(pool_result)
+                pool_results = [some_pool_result for some_pool_result in pool_results if not some_pool_result.ready()]
+                update_string_persist["unfinished save tasks"] = len(pool_results)
 
         # grid_cells[:, :, :, -1] = torch.nn.functional.tanh(grid_cells[:, :, :, -1])
         # negative_values = (grid_cells[:, :, :, -1] - 0) < -0.25

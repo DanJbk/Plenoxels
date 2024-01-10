@@ -157,6 +157,9 @@ def visulize_3d_in_2d(grid_cells_data, transform_matrices, camera_angle_x, imgs,
 def visulize_3d_in_2d_fast(grid, points_distance, transform_matrix, camera_angle_x, size_y):
     # Load camera parameters ---
 
+    grid = grid.detach().cpu()
+    transform_matrix = transform_matrix.detach().cpu()
+
     rotation_matrix = transform_matrix[:3, :3]
     camera_normal = -rotation_matrix[:, 2]
     pos = transform_matrix[:3, 3]

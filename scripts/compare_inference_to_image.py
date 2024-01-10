@@ -59,7 +59,7 @@ def compare_grid_to_image(path, transform_path, grid_cells_path, imgindex, do_th
                                    size_y=500)
 
     # image ground truth
-    image_gt = (imgs * 255).squeeze().numpy().astype(np.uint8)
+    image_gt = (imgs * 255).squeeze().detach().cpu().numpy().astype(np.uint8)
 
     if image_path and save_image:
         # fig.savefig(image_path)

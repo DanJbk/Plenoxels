@@ -37,7 +37,7 @@ def visulize_grid_ploty(grid_cells_path, threshold, do_threshold, clean_strays, 
         grid_cells[..., -1][alphas < threshold] = 0.0
         grid_cells[..., -1][alphas > 0] = 1.
 
-    if clean_strays == "True":
+    if clean_strays == True:
         grid_cells = convolve_grid_to_remove_noise(grid_cells, kernel_size=3, radius=1.0, threshold=2, repeats=20)
         grid_cells = convolve_grid_to_remove_noise(grid_cells, kernel_size=7, radius=3.0, threshold=4, repeats=20)
 

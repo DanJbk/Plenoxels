@@ -107,14 +107,7 @@ def get_nearest_voxels(normalized_samples_for_indices, grid, receptive_field=1):
     :param grid: A tensor representing the grid in which the points are located.
     :return: A tuple containing the tensor with the nearest voxel values and a boolean tensor indicating
     """
-    # points = torch.tensor([[5, 6, 7], [2, 5, 8], [4, 6, 7]])
-    # slice_size = 3
-    # indices_x = torch.clamp(points[:, 0].unsqueeze(1) + torch.arange(-slice_size + 1, slice_size), 0, sx - 1).long()
-    # indices_y = torch.clamp(points[:, 1].unsqueeze(1) + torch.arange(-slice_size + 1, slice_size), 0, sy - 1).long()
-    # indices_z = torch.clamp(points[:, 2].unsqueeze(1) + torch.arange(-slice_size + 1, slice_size), 0, sz - 1).long()
-    # subarrays = meshgrid[indices_x[:, :, None, None], indices_y[:, None, :, None], indices_z[:, None, None, :]]
 
-    # grid = voxel_average(grid, receptive_field_size=15) # sorta works but too slow
     indices = torch.round(normalized_samples_for_indices).to(torch.long)
     outofbounds = find_out_of_bound(indices, grid)
     idx1, idx2, idx3 = fix_out_of_bounds(indices, grid)
@@ -178,19 +171,12 @@ def collect_cell_information_via_indices(normalized_samples_for_indices, B):
 
 
 def average_pool3d_grid(tensor, receptive_field_size=3, stride=None):
-    # Suppose your tensor is named `input`
-    # input shape: [X,Y,Z,4]
-    # Swap dimensions to make channels the second dimension
-    input = tensor.permute(3, 0, 1, 2).unsqueeze(0)
 
-    # Define the size of your receptive field
-    # For example, it's [2,2,2]
+    input = tensor.permute(3, 0, 1, 2).unsqueeze(0)
     receptive_field = (receptive_field_size, receptive_field_size, receptive_field_size)
 
-    # Create the AvgPool3d layer
     output = F.avg_pool3d(input, receptive_field, stride=stride)
 
-    # Swap dimensions back
     output = output.squeeze().permute(1, 2, 3, 0)
     return output
 
@@ -287,7 +273,7 @@ def convolve_grid_to_remove_noise(grid_cells, kernel_size=3, radius=1.0, thresho
     weights = weights.to(grid_cells.device)  # Move weights to the same device as the tensor
     weights /= weights.max()
 
-    for _ in tqdm(range(repeats)):
+    for _ in tqdm(range(repeats), desc="cleaning scattered voxels"):
         output = F.conv3d(grid_cells[..., -1].unsqueeze(0), weights, padding='same')[0]
         grid_cells[output < threshold] = 0
 

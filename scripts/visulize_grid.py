@@ -24,8 +24,8 @@ def visulize_grid_ploty(grid_cells_path, threshold, do_threshold, clean_strays, 
     grid_cells = grid_cells_data["grid"]
 
     if 'grid_grad' in grid_cells_data.keys():
-        grid_cells_grad = grid_cells_data['grid_grad'].detach().cpu()#.numpy()
-        # grid_cells[:, :, :, -1] = (grid_cells[:, :, :, -1])*((torch.norm(grid_cells_grad[..., :-1], dim=-1) > 4.0e-04)
+        grid_cells_grad = grid_cells_data['grid_grad'].detach().cpu()
+
         if do_threshold:
             grid_cells[:, :, :, -1][(torch.norm(grid_cells_grad[..., :-1], dim=-1) < 3.0e-06)] = 0
 
@@ -53,7 +53,6 @@ def visulize_grid_ploty(grid_cells_path, threshold, do_threshold, clean_strays, 
     y = grid_cells_coords[:, 1]
     z = grid_cells_coords[:, 2]
     rgb = grid_cells[x, y, z, :-1]
-    print(rgb.shape)
 
     if visulize_colors_grad:
         grid_cells_coords = np.argwhere(

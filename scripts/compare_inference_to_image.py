@@ -62,7 +62,6 @@ def compare_grid_to_image(path, transform_path, grid_cells_path, imgindex, do_th
     image_gt = (imgs * 255).squeeze().detach().cpu().numpy().astype(np.uint8)
 
     if image_path and save_image:
-        # fig.savefig(image_path)
         plt.imsave(image_path, np.ascontiguousarray(image))
         return
 

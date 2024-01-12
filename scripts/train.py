@@ -66,7 +66,7 @@ def tv_loss(input_tensor):
 
 
 def fit(gridsize, points_distance_original, number_of_rays, num_samples, delta_step, lr, tv, beta, steps, even_spread, path,
-        transform_path, save_path, device):
+        transform_path, save_path, device, progressive_growing=True):
 
     camera_ray = False
 
@@ -107,7 +107,7 @@ def fit(gridsize, points_distance_original, number_of_rays, num_samples, delta_s
 
         receptive_field_size = receptive_fields_sizes[i // steps_per_field] if i // steps_per_field < len(receptive_fields_sizes) else 0 # max(a if i < b else 0 for a, b in zip(receptive_fields, start_receptive_fields))
 
-        if receptive_field_size > 1:
+        if receptive_field_size > 1 and progressive_growing:
 
             stride = max(1, receptive_field_size // 4)
             start_index = int(receptive_field_size / 2)
@@ -227,6 +227,7 @@ if __name__ == "__main__":
     parser.add_argument('--tv', default=1e-5, type=float, help='tv loss strength (set to 0 to disable)')
     parser.add_argument('--beta', default=5e-3, type=float, help='tv loss strength (set to 0 to disable)')
     parser.add_argument('--steps', default=500, type=int, help='training steps')
+    parser.add_argument('--progressive_growing', type=bool,default=True, help="whether to grow the grid while training")
     parser.add_argument('--even_spread', default=False, type=bool,  help='whether to set spread rays evenly. '
                                                                          'the ray number needs to have a natural '
                                                                          'square root')

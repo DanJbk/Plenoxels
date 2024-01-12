@@ -1,3 +1,4 @@
+import time
 
 import torch
 
@@ -23,15 +24,15 @@ def main():
     gridsize = [256, 256, 256]
     points_distance = 0.0125
 
-    number_of_rays = 128
+    number_of_rays = 75
     num_samples = 600
     delta_step = 0.0125
 
-    lr = 0.0075
-    steps = 500
+    lr = 0.0025
+    steps = 1650
 
-    tv = 1e-5
-    beta = 5e-3
+    tv = 0
+    beta = 0
     even_spread = False
 
     # --
@@ -46,11 +47,12 @@ def main():
         save_path, device)
 
     # visualize result in 2d
-    compare_grid_to_image(test_path, transform_path_test, save_path, 26, do_threshold=True, transparency_threshold=0.1,
+    t = time.time()
+    compare_grid_to_image(test_path, transform_path_test, save_path, 26, do_threshold=True, transparency_threshold=0.00,
                           number_of_rays=100*100, num_samples=num_samples, device=device)
 
     # visualize result in 3d
-    visulize_grid_ploty(save_path, threshold=0.1, do_threshold=True)
+    visulize_grid_ploty(save_path, threshold=0.001, do_threshold=True, clean_strays=True)
 
 
 if __name__ == "__main__":

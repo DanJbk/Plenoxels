@@ -155,7 +155,6 @@ def sample_camera_rays_batched(transform_matrices, camera_angle_x, imgs, number_
                                                                        camera_angle_x,
                                                                        even_spread=even_spread, device=device)
 
-    # Move tensors to specified device
     current_ray_directions = current_ray_directions
     camera_positions = transform_matrices[:, :3, 3]
 

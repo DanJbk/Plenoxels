@@ -1,5 +1,7 @@
 import torch
 import numpy as np
+import torch.nn.functional as F
+from tqdm import tqdm
 
 
 def trilinear_interpolation(normalized_samples_for_indecies, selected_points, grid_cells):
@@ -77,17 +79,76 @@ def fix_out_of_bounds(indices, grid):
     return idx1, idx2, idx3
 
 
-def get_nearest_voxels(normalized_samples_for_indices, grid):
+def voxel_average(tensor, receptive_field_size=3):
+    # Ensure receptive_field_size is odd
+    assert receptive_field_size % 2 == 1, "receptive_field_size should be odd"
+
+    # Move the RGBD dimension to the second position and convert to float
+    tensor = tensor.permute(3, 0, 1, 2).unsqueeze(0).float()  # size becomes [1, 4, X, Y, Z]
+
+    # Define the filter (kernel)
+    kernel_value = 1.0 / (receptive_field_size ** 3)
+    kernel = torch.full((1, 1, receptive_field_size, receptive_field_size, receptive_field_size), kernel_value,
+                        device=tensor.device).repeat(4, 1, 1, 1, 1)
+
+    # Apply the filter to your tensor using the convolution operation
+    result = F.conv3d(tensor, kernel, padding=receptive_field_size // 2, groups=4)
+
+    # Move the RGBD dimension to the last position again
+    result = result.squeeze(0).permute(1, 2, 3, 0)  # size becomes [X, Y, Z, 4]
+
+    return result
+
+
+def get_nearest_voxels(normalized_samples_for_indices, grid, receptive_field=1):
     """
     Gets the nearest voxel values for the given normalized samples in the grid.
     :param normalized_samples_for_indices: A tensor of size (N, 3) containing normalized sample points.
     :param grid: A tensor representing the grid in which the points are located.
     :return: A tuple containing the tensor with the nearest voxel values and a boolean tensor indicating
     """
+
     indices = torch.round(normalized_samples_for_indices).to(torch.long)
     outofbounds = find_out_of_bound(indices, grid)
     idx1, idx2, idx3 = fix_out_of_bounds(indices, grid)
     return grid[idx1, idx2, idx3], outofbounds
+
+
+def get_receptive_field_voxels(grid, normalized_samples, receptive_field=1, device='cpu'):
+
+    sx, sy, sz, _ = grid.shape
+
+    kernel_size = receptive_field // 2
+
+    # Create tensors of indices
+    # each of shape torch.Size([4, receptive_field])
+    indices_x = normalized_samples[:, 0].unsqueeze(1) + torch.arange(-kernel_size, 1 + kernel_size, device=device)
+    indices_y = normalized_samples[:, 1].unsqueeze(1) + torch.arange(-kernel_size, 1 + kernel_size, device=device)
+    indices_z = normalized_samples[:, 2].unsqueeze(1) + torch.arange(-kernel_size, 1 + kernel_size, device=device)
+
+    # Create the mask indices
+    # each of shape torch.Size([4, receptive_field])
+    mask_x = (indices_x >= 0) & (indices_x < sx)
+    mask_y = (indices_y >= 0) & (indices_y < sy)
+    mask_z = (indices_z >= 0) & (indices_z < sz)
+
+    # Combine the masks for each dimension
+    # of shape torch.Size([4, receptive_field, receptive_field, receptive_field])
+    mask = mask_x[:, :, None, None] & mask_y[:, None, :, None] & mask_z[:, None, None, :]
+
+    # clamp the indices to avoid out of range errors
+    torch.clamp_(indices_x, 0, sx - 1)
+    torch.clamp_(indices_y, 0, sy - 1)
+    torch.clamp_(indices_z, 0, sz - 1)
+
+    # Use the index tensors to extract the subarrays from the meshgrid
+    # of shape torch.Size([4, receptive_field, receptive_field, receptive_field, 3])
+    result = grid[indices_x[:, :, None, None], indices_y[:, None, :, None], indices_z[:, None, None, :]]
+    result.mul_(mask.unsqueeze(-1))
+
+    # mean the area around the points
+    # use mean and reduce to shape torch.Size([receptive_field, 3])
+    return result.mean(dim=(1, 2, 3))
 
 
 def collect_cell_information_via_indices(normalized_samples_for_indices, B):
@@ -108,6 +169,16 @@ def collect_cell_information_via_indices(normalized_samples_for_indices, B):
     output = B[idx1, idx2, idx3]
     return output, outofbounds
 
+
+def average_pool3d_grid(tensor, receptive_field_size=3, stride=None):
+
+    input = tensor.permute(3, 0, 1, 2).unsqueeze(0)
+    receptive_field = (receptive_field_size, receptive_field_size, receptive_field_size)
+
+    output = F.avg_pool3d(input, receptive_field, stride=stride)
+
+    output = output.squeeze().permute(1, 2, 3, 0)
+    return output
 
 
 def generate_grid(sx, sy, sz, points_distance=0.5, info_size=4, device="cuda"):
@@ -173,3 +244,37 @@ def get_grid_points_indices(normalized_samples_for_indecies):
     relevant_points = torch.cat(relevant_points, 1).type(torch.long)
 
     return relevant_points
+
+
+def gaussian_kernel_3d(size: int = 3, sigma: float = 1.0):
+    """Generate 3D Gaussian kernel."""
+    k = np.linspace(-(size // 2), size // 2, size)
+    x, y, z = np.meshgrid(k, k, k)
+    d = np.sqrt(x * x + y * y + z * z)
+    kernel = np.exp(-(d ** 2) / (2.0 * sigma ** 2))
+    kernel[size // 2, size // 2, size // 2] = 0  # Ensure the center is 0
+    kernel /= np.sum(kernel)
+    return torch.from_numpy(kernel).float()
+
+
+def filled_circle_kernel_3d(size: int = 3, radius: float = 1.0):
+    """Generate 3D filled circular kernel."""
+    k = np.linspace(-(size // 2), size // 2, size)
+    x, y, z = np.meshgrid(k, k, k)
+    d = np.sqrt(x * x + y * y + z * z)
+    kernel = np.where(d <= radius, 1, 0)
+    kernel[size // 2, size // 2, size // 2] = 0  # Ensure the center is 0
+    return torch.from_numpy(kernel).float()
+
+
+def convolve_grid_to_remove_noise(grid_cells, kernel_size=3, radius=1.0, threshold=2, repeats=20):
+    weights = filled_circle_kernel_3d(kernel_size, radius).unsqueeze(0).unsqueeze(
+        0)
+    weights = weights.to(grid_cells.device)  # Move weights to the same device as the tensor
+    weights /= weights.max()
+
+    for _ in tqdm(range(repeats), desc="cleaning scattered voxels"):
+        output = F.conv3d(grid_cells[..., -1].unsqueeze(0), weights, padding='same')[0]
+        grid_cells[output < threshold] = 0
+
+    return grid_cells
